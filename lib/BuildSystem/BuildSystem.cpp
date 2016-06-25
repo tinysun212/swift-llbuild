@@ -17,6 +17,7 @@
 #include "llbuild/Basic/FileSystem.h"
 #include "llbuild/Basic/Hashing.h"
 #include "llbuild/Basic/LLVM.h"
+#include "llbuild/Basic/ShellUtility.h"
 #include "llbuild/Core/BuildDB.h"
 #include "llbuild/Core/BuildEngine.h"
 #include "llbuild/Core/DependencyInfoParser.h"
@@ -29,6 +30,7 @@
 #include "llbuild/BuildSystem/ExternalCommand.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
@@ -909,19 +911,21 @@ class ShellCommand : public ExternalCommand {
   DepsStyle depsStyle = DepsStyle::Unused;
   
   virtual uint64_t getSignature() override {
-    uint64_t result = ExternalCommand::getSignature();
+    // FIXME: Use a more appropriate hashing infrastructure.
+    using llvm::hash_combine;
+    llvm::hash_code code = ExternalCommand::getSignature();
     for (const auto& arg: args) {
-      result ^= basic::hashString(arg);
+      code = hash_combine(code, arg);
     }
     for (const auto& entry: env) {
-      result ^= basic::hashString(entry.getKey());
-      result ^= basic::hashString(entry.getValue());
+      code = hash_combine(code, entry.getKey());
+      code = hash_combine(code, entry.getValue());
     }
     for (const auto& path: depsPaths) {
-      result ^= basic::hashString(path);
+      code = hash_combine(code, path);
     }
-    result ^= int(depsStyle);
-    return result;
+    code = hash_combine(code, int(depsStyle));
+    return size_t(code);
   }
 
   bool processDiscoveredDependencies(BuildSystemCommandInterface& bsci,
@@ -1066,12 +1070,7 @@ public:
     for (const auto& arg: args) {
       if (!first) os << " ";
       first = false;
-      // FIXME: This isn't correct, we need utilities for doing shell quoting.
-      if (arg.find(' ') != StringRef::npos) {
-        os << '"' << arg << '"';
-      } else {
-        os << arg;
-      }
+      basic::appendShellEscapedString(os, arg);
     }
   }
   
