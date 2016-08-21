@@ -49,7 +49,9 @@ void BuildSystemInvocation::getUsage(int optionWidth, raw_ostream& os) {
   };
   
   for (const auto& entry: options) {
-    os << "  " << llvm::format("%-*s", optionWidth, entry.option) << " "
+    //os << "  " << llvm::format("%-*s", optionWidth, entry.option) << " "
+    //os << "  " << llvm::format("%s", entry.option) << " "
+    os << "  " << entry.option << "                "
        << entry.helpText << "\n";
   }
 }
