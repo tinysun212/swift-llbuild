@@ -158,6 +158,12 @@ public:
       sigaddset(&mostSignals, i);
     }
     posix_spawnattr_setsigdefault(&attributes, &mostSignals);
+#elif defined(__CYGWIN__)
+    sigset_t mostSignals;
+    sigfillset(&mostSignals);
+    sigdelset(&mostSignals, SIGKILL);
+    sigdelset(&mostSignals, SIGSTOP);
+    posix_spawnattr_setsigdefault(&attributes, &mostSignals);
 #else
     sigset_t allSignals;
     sigfillset(&allSignals);
