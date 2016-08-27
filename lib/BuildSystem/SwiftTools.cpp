@@ -235,6 +235,11 @@ class SwiftCompilerShellCommand : public ExternalCommand {
     result.push_back("-num-threads");
     result.push_back(numThreads);
     result.push_back("-c");
+    //FIXME: Patched for CYGWIN
+    result.push_back("-D");
+    result.push_back("CYGWIN");
+    result.push_back("-I");
+    result.push_back("/usr/include");
     for (const auto& source: sourcesList) {
       result.push_back(source);
     }
