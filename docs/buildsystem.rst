@@ -21,8 +21,9 @@ and requirements so that the process of executing a typical software build is
 enough information to be able to perform sophisticated tasks like automatic
 distributed compilation or making use of a in-process compiler design.
 
-Build Graph
-===========
+
+Build Description
+=================
 
 Conceptually, the ``BuildSystem`` is organized around a bipartite graph of
 commands and nodes. A ``Command`` represent a units of computation that need to
@@ -32,6 +33,11 @@ is to be used to create it. The tools themselves are integrated into the
 ``BuildSystem`` component (either as builtin tools, or via the client), and this
 allows them to provided customizable features for use in the build file, and to
 be deeply integrated with *llbuild*.
+
+The build graph is supplied to the ``BuildSystem`` via a ``BuildDescription``
+which can either be loaded from a build file (see below), or can be directly
+constructed by clients. The latter facility is currently only used for
+constructing unit tests, and is not exposed via the public llbuild API.
 
 Nodes
 -----
@@ -43,9 +49,60 @@ with a file (that said, it is a common case and the ``BuildSystem`` will have
 special support to ensure that using nodes which are proxies for files on disk
 is convenient and featureful).
 
-Currently, the build system automatically treats nodes as files unless they have
-a name matching ``'<.*>'``, see the documentation of the ``is-virtual`` node
-attribute for more information.
+There are several different types of nodes with special behavior. The build
+system allows controlling these behaviors on a per node basis, but in order to
+keep build files succinct, there is also support for inferring the type of a
+node from naming conventions on the node itself.
+
+These are the supported node types:
+
+* File Nodes: A node is by default assumed to represent a path in the filesystem
+  with the same name as the node.
+
+* Directory Tree Nodes: A node ending with "/" is assumed to represent a
+  *directory tree*, not an individual file. The node's value will be a signature
+  of the recursive contents of the entire directory tree at that path, and any
+  changes to any part of the directory structure will causes commands taking it
+  as an input to rerun.
+
+  For example, in the following build file fragment ``C1`` uses a directory node
+  because the task is doing a recursive copy of the input directory::
+  
+      commands:
+        C1:
+          tool: shell
+          inputs: ["input/"]
+          outputs: ["output/"]
+          args: rm -rf output && cp -r input output
+
+  .. note::
+    It is legal to use a directory tree node to refer to a path which is
+    *actually* just a file; the node will be considered as changed whenever the
+    file on disk is changed. This is useful when the client cannot easily know
+    in advance whether the node is expected to be a file or a directory, but
+    should be treated as a directory tree if it is one.
+
+  The directory tree will eagerly scan the directory as soon as any commands
+  which produce the immediate directory are complete. This means that the build
+  graph **MUST** contain a complete dependency graph between the tree node and
+  any command which may produce content within the directory. If such a
+  dependency is missing, the build system will typically end up scanning the
+  directory before all content is produced, and this will result in the first
+  build being incomplete, and the next build redoing the remainder of the work.
+  
+* Virtual Nodes: Nodes matching the name ``'<.*>'``, e.g. ``<gate-task>``, are
+  *assumed* to be virtual nodes, and are used for adding arbitrary edges to the
+  graph. Virtual nodes carry no value and only will only cause commands to
+  rebuild based on their presence or absence. see the documentation of the
+  ``is-virtual`` node attribute for more information.
+
+* Command Timestamps: A node can be marked as being a *command timestamp* (see
+  the ``is-command-timestamp`` node attributes). Command timestamps are always
+  virtual, but will carry a value representing the time at which the command
+  which produces them was run. When used as an input to a subsequent command,
+  this will cause that command to rerun whenever the producer of the timestamp
+  is run. This can be used to build triggers such that one command will always
+  force another to build.
 
 Commands
 --------
@@ -268,6 +325,13 @@ The following attributes are currently supported:
    * - Name
      - Description
 
+   * - is-directory
+   
+     - A boolean value, indicating whether or not the node should represent a
+       directory instead of a file path. By default, the build system assumes
+       that nodes matching the pattern ``'.*/'`` (e.g., ``/tmp/``) are directory
+       nodes. This attribute can be used to override that default.
+
    * - is-virtual
      - A boolean value, indicating whether or not the node is "virtual". By
        default, the build system assumes that nodes matching the pattern
@@ -275,6 +339,28 @@ The following attributes are currently supported:
        to files in the file system matching the name. This attribute can be used
        to override that default.
 
+   * - is-command-timestamp
+     - A boolean value, indicating whether the node should be used to represent
+       the "timestamp" at which a command was run. When set, the node should
+       also be the output of some command in the graph. Whenever that command is
+       run, the node will take on a value representing the timestamp at which
+       the command was run.
+
+       This node can then be used as a (virtual) input to another command in
+       order to cause the downstream command to rerun whenever the producing
+       command is run.
+
+       Such nodes are always virtual nodes.
+
+   * - is-mutated
+     - A boolean value, indicating whether the node is mutated by commands in
+       the build. When a command is mutated, it's file system information will
+       no longer be used in determining whether a detected change in the
+       *output* of a command should cause that command to rerun. Without this
+       check, the producer of the file would always rerun since the output
+       information captured at production time will always be out-of-date once
+       the mutating command runs.
+       
 .. note::
   FIXME: At some point, we probably want to support custom node types.
 
@@ -307,8 +393,9 @@ tracking. This tool should be used when clients only care about the existence of
 the directory, not any other aspects of it. In particular, it ignores changes to
 the directory timestamp when consider whether to run.
 
-No attributes are supported other than the common keys. No inputs may be
-declared, and the sole output should be the node for the path to create.
+No attributes are supported other than the common keys. The sole output should
+be the node for the path to create. Arbitrary inputs can be declared, but they
+will only be used to establish the order in which the command is run.
 
 Symlink Tool
 ------------
@@ -325,6 +412,10 @@ it will retrieve the status information of the target, not the link itself. This
 may lead to unnecessary recreation of the link (and triggering of subsequent
 work).
 
+The sole output should be the node for the path to create. Arbitrary inputs can
+be declared, but they will only be used to establish the order in which the
+command is run.
+
 .. note::
 
    The issue here may be encountered by any other tool which needs to create
@@ -332,6 +423,13 @@ work).
    purpose feature available to any command, but that may be a desirable feature
    in the future.
 
+.. note::
+
+   The defined output of this tool will be the file system information on the
+   **link**, not the target of the link. This is almost always **not** what
+   clients want unless also using *link-output-path*, since many consumers of
+   the output will want to know about the **target** of the link.
+   
 .. list-table::
    :header-rows: 1
    :widths: 20 80
@@ -341,6 +439,14 @@ work).
 
    * - contents
      - The contents (i.e., path to the source) of the symlink.
+
+   * - link-output-path
+     
+     - If specified, defines that actual output path for the symbolic link. This
+       is **not** treated as a declared output of this task, which allows a
+       *phony* task to be created which will then define the modeled value for
+       this path. This allows a client to create a build in which both the
+       `lstat()` and `stat()` information for a link are accurately modeled.
 
 Shell Tool
 ----------
@@ -363,9 +469,13 @@ attributes on commands, and not at the tool level.
 
    * - env
      - A mapping of keys and values defining the environment to pass to the
-       launched process. If provided, **only** the entries in this mapping will
-       be exposed in the process environment. If not provided, the process will
-       inherit the environment from the client.
+       launched process. See also `inherit-env`.
+
+   * - inherit-env
+     - A boolean flag controlling whether this command should inherit the base
+       environment provided when executing the build system (either from the
+       command line, or via the internal C APIs), or whether it should only
+       include the entries explicitly provided in the `env` mapping above.
 
    * - allow-missing-inputs
      - A boolean value, indicating whether the commands should be allowed to run
@@ -594,3 +704,30 @@ A typical use for this tool is creating static libraries.
    FIXME: currently the archive is always recreated entirely, it would be
    preferable in future to correctly update/delete/create the archive file
    as required.
+
+Stale File Removal Tool
+-----------------------
+
+**Identifier**: *stale-file-removal*
+
+A tool to remove stale files from previous builds.
+
+The build system records the last value of `expectedOutputs` and compares it
+to the current one. Any path that was previously present, but isn't in the
+current string list will be removed from the file system.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Name
+     - Description
+
+   * - expectedOutputs
+     - A string list of paths that are expected to be produced by the given
+       manifest.
+
+   * - roots
+     - A string lists of paths that are the only allowed root paths for files
+       to be deleted. Files outside of those paths will not be removed by
+       stale file removal.

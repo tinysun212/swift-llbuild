@@ -52,6 +52,7 @@ static llb_buildsystem_command_t*
 fancy_tool_create_command(void *context, const llb_data_t* name) {
   llb_buildsystem_external_command_delegate_t delegate;
   delegate.context = NULL;
+  delegate.get_signature = NULL;
   delegate.execute_command = fancy_command_execute_command;
   return llb_buildsystem_external_command_create(name, delegate);
 }
@@ -140,7 +141,8 @@ static void command_started(void* context,
 }
 
 static void command_finished(void* context,
-                             llb_buildsystem_command_t* command) {
+                             llb_buildsystem_command_t* command,
+                             llb_buildsystem_command_result_t result) {
   llb_data_t name;
   llb_buildsystem_command_get_name(command, &name);
   printf("%s: %.*s\n", __FUNCTION__, (int)name.length, name.data);
@@ -177,6 +179,7 @@ static void command_process_had_output(void* context,
 static void command_process_finished(void* context,
                                      llb_buildsystem_command_t* command,
                                      llb_buildsystem_process_t* process,
+                                     llb_buildsystem_command_result_t result,
                                      int exit_status) {
 }
 
@@ -211,10 +214,20 @@ int main(int argc, char **argv) {
     
   // Create a build system.
   llb_buildsystem_t* system = llb_buildsystem_create(delegate, invocation);
-    
-  // Build the default target.
+
+  // Initialize the system.
+  llb_buildsystem_initialize(system);
+  
+  // Build the default target, twice.
   llb_data_t key = { 0, NULL };
-  llb_buildsystem_build(system, &key);
+  printf("initial build:\n");
+  if (!llb_buildsystem_build(system, &key)) {
+    printf("build had command failures\n");
+  }
+  printf("second build:\n");
+  if (!llb_buildsystem_build(system, &key)) {
+    printf("build had command failures\n");
+  }    
 
   // Destroy the build system.
   llb_buildsystem_destroy(system);

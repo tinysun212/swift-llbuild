@@ -3,3 +3,7 @@ add_llbuild_unittest(NinjaTests
   )
 
 target_link_libraries(NinjaTests llbuildNinja)
+
+if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
+  target_link_libraries(NinjaTests curses)
+endif()

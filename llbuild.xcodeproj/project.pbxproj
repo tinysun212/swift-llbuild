@@ -55,6 +55,7 @@
 				E1A2254719F9A2140059043E /* PBXTargetDependency */,
 				E147DF1C1BA81DAE0032D08E /* PBXTargetDependency */,
 				E1A2254919F9A2170059043E /* PBXTargetDependency */,
+				9DB047BF1DF9D4B8006CDF52 /* PBXTargetDependency */,
 				E1A2254B19F9A2190059043E /* PBXTargetDependency */,
 			);
 			name = test;
@@ -63,12 +64,27 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		9D0A6D811E1FFEA800BE636F /* TempDir.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D0A6D7F1E1FFEA800BE636F /* TempDir.cpp */; };
+		9D2107C61DFADDFA00BE26FF /* libcurses.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = E15B6EC61B546A2C00643066 /* libcurses.dylib */; };
+		9D5A5C311EC5FAE600DC84CC /* TempDir.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9D0A6D7F1E1FFEA800BE636F /* TempDir.cpp */; };
+		9DADBBAD1E256C73005B4869 /* PlatformUtility.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DADBBAC1E256C52005B4869 /* PlatformUtility.cpp */; };
+		9DB047BA1DF9D4A4006CDF52 /* libgtest_main.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1A224E619F99C580059043E /* libgtest_main.a */; };
+		9DB047BB1DF9D4A4006CDF52 /* libgtest.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1A224DD19F99B0E0059043E /* libgtest.a */; };
+		9DB047BC1DF9D4AA006CDF52 /* libllvmSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B838A21B52E7DE00DB876B /* libllvmSupport.a */; };
+		9DB047BD1DF9D4B0006CDF52 /* libllbuildBuildSystem.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B839571B541BFD00DB876B /* libllbuildBuildSystem.a */; };
+		9DB047C01DF9F592006CDF52 /* LaneBasedExecutionQueueTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DB0478B1DF9D3E2006CDF52 /* LaneBasedExecutionQueueTest.cpp */; };
+		9DDD8BE11DDCAB9A00FB62D2 /* SQLiteBuildDBTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9DDD8BDF1DDCAB9A00FB62D2 /* SQLiteBuildDBTest.cpp */; };
+		C5740D091E03523100567DD8 /* BuildSystemFrontendTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C5740D081E03523100567DD8 /* BuildSystemFrontendTest.cpp */; };
+		C5740D0A1E03527B00567DD8 /* libllbuildCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1A2243E19F997150059043E /* libllbuildCore.a */; };
+		C5740D0B1E03528600567DD8 /* libllbuildBasic.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1A2242519F991B40059043E /* libllbuildBasic.a */; };
+		C5740D0C1E03529300567DD8 /* libsqlite3.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = E1E221081A00B82100957481 /* libsqlite3.dylib */; };
 		E104FAF71B655A97005C68A0 /* BuildSystemPerfTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = E104FAF61B655A97005C68A0 /* BuildSystemPerfTests.mm */; };
 		E104FAFA1B655BBA005C68A0 /* libllbuildBuildSystem.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B839571B541BFD00DB876B /* libllbuildBuildSystem.a */; };
 		E104FAFB1B655C33005C68A0 /* libllvmSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B838A21B52E7DE00DB876B /* libllvmSupport.a */; };
 		E104FAFE1B655C5D005C68A0 /* libcurses.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = E15B6EC61B546A2C00643066 /* libcurses.dylib */; };
 		E104FB001B6568E0005C68A0 /* BuildSystem.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E104FAFF1B6568E0005C68A0 /* BuildSystem.cpp */; };
 		E1066C081BC5ACAB00B892CE /* LaneBasedExecutionQueue.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1066C071BC5ACAB00B892CE /* LaneBasedExecutionQueue.cpp */; };
+		E1075ED71E4EA417007D52C6 /* BuildSystemTaskTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1075ED61E4EA417007D52C6 /* BuildSystemTaskTests.cpp */; };
 		E10D5CDF19FEBF6A00211ED4 /* LitTests.m in Sources */ = {isa = PBXBuildFile; fileRef = E10D5CDE19FEBF6A00211ED4 /* LitTests.m */; };
 		E10D5CE419FEF3BD00211ED4 /* Python.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E10D5CE319FEF3BD00211ED4 /* Python.framework */; };
 		E10D5CE619FEF40100211ED4 /* LitTests.py in Resources */ = {isa = PBXBuildFile; fileRef = E10D5CE519FEF40100211ED4 /* LitTests.py */; };
@@ -79,6 +95,10 @@
 		E1192CEF1C49DBA900F85890 /* Core-C-API.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1DD22741C47259900555A5D /* Core-C-API.cpp */; };
 		E1192CF11C49DC3300F85890 /* libllbuildBuildSystem.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B839571B541BFD00DB876B /* libllbuildBuildSystem.a */; };
 		E1192CF21C49DC4F00F85890 /* libcurses.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = E15B6EC61B546A2C00643066 /* libcurses.dylib */; };
+		E11F2B7F1E4D255B00176BAD /* BuildDescription.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E11F2B7E1E4D255B00176BAD /* BuildDescription.cpp */; };
+		E120B9ED1E4E65EB00B28469 /* BinaryCodingTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E120B9EB1E4E65EB00B28469 /* BinaryCodingTests.cpp */; };
+		E120B9EE1E4E65EB00B28469 /* ShellUtilityTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E120B9EC1E4E65EB00B28469 /* ShellUtilityTest.cpp */; };
+		E120B9F11E4E669F00B28469 /* BinaryCodingPerfTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = E120B9F01E4E669F00B28469 /* BinaryCodingPerfTests.mm */; };
 		E12BFF181C4972D900B8D20F /* libsqlite3.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = E1E221081A00B82100957481 /* libsqlite3.dylib */; };
 		E12BFF191C4972E000B8D20F /* libcurses.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = E15B6EC61B546A2C00643066 /* libcurses.dylib */; };
 		E12BFF1A1C4972F000B8D20F /* libllbuildBuildSystem.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B839571B541BFD00DB876B /* libllbuildBuildSystem.a */; };
@@ -108,6 +128,7 @@
 		E1604CB51BB9E03E001153A1 /* swift-build-tool.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1604CB41BB9E032001153A1 /* swift-build-tool.cpp */; };
 		E171538D1A0BF702004CD598 /* CorePerfTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = E171538C1A0BF702004CD598 /* CorePerfTests.mm */; };
 		E17440C31CE192FF0070A30C /* ShellUtility.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E17440C21CE192FF0070A30C /* ShellUtility.cpp */; };
+		E192E92F1E30014E00122F17 /* BuildValueTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E192E92E1E30014E00122F17 /* BuildValueTest.cpp */; };
 		E19D79921A15D9E6002604FB /* MakefileDepsParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E19D79911A15D9E6002604FB /* MakefileDepsParser.cpp */; };
 		E19D79951A15DA06002604FB /* MakefileDepsParserTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E19D79941A15DA06002604FB /* MakefileDepsParserTest.cpp */; };
 		E1A0B0FF1C971582006DA08F /* DependencyInfoParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1A0B0FE1C971581006DA08F /* DependencyInfoParser.cpp */; };
@@ -146,6 +167,7 @@
 		E1AAD2921BC65B5000F54680 /* SwiftTools.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1AAD2911BC65B5000F54680 /* SwiftTools.cpp */; };
 		E1ADC23E1A85938C00D5387C /* C-API.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1ADC2311A85922F00D5387C /* C-API.cpp */; };
 		E1ADC23F1A8593AD00D5387C /* llbuild.h in Headers */ = {isa = PBXBuildFile; fileRef = E1ADC2351A8592AA00D5387C /* llbuild.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		E1B3B9DC1E4D5A7A00DF1FBC /* MockBuildSystemDelegate.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B3B9DA1E4D5A7A00DF1FBC /* MockBuildSystemDelegate.cpp */; };
 		E1B838D21B52E86E00DB876B /* Allocator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B838A71B52E85400DB876B /* Allocator.cpp */; };
 		E1B838D31B52E86E00DB876B /* Atomic.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B838A81B52E85400DB876B /* Atomic.cpp */; };
 		E1B838D41B52E86E00DB876B /* Debug.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B838AA1B52E85400DB876B /* Debug.cpp */; };
@@ -177,7 +199,7 @@
 		E1B838EE1B52E86E00DB876B /* Valgrind.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B838CE1B52E85400DB876B /* Valgrind.cpp */; };
 		E1B838EF1B52E86E00DB876B /* YAMLParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B838CF1B52E85400DB876B /* YAMLParser.cpp */; };
 		E1B838F01B52E86E00DB876B /* circular_raw_ostream.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B838D01B52E85400DB876B /* circular_raw_ostream.cpp */; };
-		E1B838F11B52E86E00DB876B /* raw_ostream.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B838D11B52E85400DB876B /* raw_ostream.cpp */; };
+		E1B838F11B52E86E00DB876B /* raw_ostream.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E1B838D11B52E85400DB876B /* raw_ostream.cpp */; settings = {COMPILER_FLAGS = "-Xclang -analyzer-disable-all-checks"; }; };
 		E1B8393A1B52E8C100DB876B /* libllvmSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B838A21B52E7DE00DB876B /* libllvmSupport.a */; };
 		E1B8393B1B52E8CC00DB876B /* libllvmSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B838A21B52E7DE00DB876B /* libllvmSupport.a */; };
 		E1B839471B52EAAE00DB876B /* libllvmSupport.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E1B838A21B52E7DE00DB876B /* libllvmSupport.a */; };
@@ -210,6 +232,48 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		9D2107C31DF9FBFA00BE26FF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E1A223E919F98F1C0059043E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9DB047A71DF9D43D006CDF52;
+			remoteInfo = BuildSystemTests;
+		};
+		9DB047AF1DF9D464006CDF52 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E1A223E919F98F1C0059043E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E1A224DC19F99B0E0059043E;
+			remoteInfo = gtest;
+		};
+		9DB047B11DF9D469006CDF52 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E1A223E919F98F1C0059043E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E1A224E519F99C580059043E;
+			remoteInfo = gtest_main;
+		};
+		9DB047B31DF9D471006CDF52 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E1A223E919F98F1C0059043E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E1B838981B52E7DE00DB876B;
+			remoteInfo = llvmSupport;
+		};
+		9DB047B71DF9D483006CDF52 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E1A223E919F98F1C0059043E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E1B839481B541BFD00DB876B;
+			remoteInfo = llbuildBuildSystem;
+		};
+		9DB047BE1DF9D4B8006CDF52 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E1A223E919F98F1C0059043E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9DB047A71DF9D43D006CDF52;
+			remoteInfo = BuildSystemTests;
+		};
 		E104FAF81B655BB2005C68A0 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E1A223E919F98F1C0059043E /* Project object */;
@@ -577,6 +641,15 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		9DB047A61DF9D43D006CDF52 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
 		E147DF111BA81D330032D08E /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -628,10 +701,21 @@
 		54E187B61CD296EA00F7EC89 /* BuildNode.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BuildNode.h; sourceTree = "<group>"; };
 		54E187B71CD296EA00F7EC89 /* ExternalCommand.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ExternalCommand.h; sourceTree = "<group>"; };
 		54E187B81CD296EA00F7EC89 /* SwiftTools.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SwiftTools.h; sourceTree = "<group>"; };
+		9D0A6D7F1E1FFEA800BE636F /* TempDir.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TempDir.cpp; sourceTree = "<group>"; };
+		9D0A6D801E1FFEA800BE636F /* TempDir.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TempDir.h; sourceTree = "<group>"; };
+		9D2589301E3820E3006C76F4 /* PlatformUtility.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformUtility.h; sourceTree = "<group>"; };
+		9D2589311E38221D006C76F4 /* CommandResult.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CommandResult.h; sourceTree = "<group>"; };
+		9DADBBAC1E256C52005B4869 /* PlatformUtility.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PlatformUtility.cpp; sourceTree = "<group>"; };
+		9DB0478B1DF9D3E2006CDF52 /* LaneBasedExecutionQueueTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = LaneBasedExecutionQueueTest.cpp; sourceTree = "<group>"; };
+		9DB047A81DF9D43D006CDF52 /* BuildSystemTests */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = BuildSystemTests; sourceTree = BUILT_PRODUCTS_DIR; };
+		9DDD8BDF1DDCAB9A00FB62D2 /* SQLiteBuildDBTest.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SQLiteBuildDBTest.cpp; sourceTree = "<group>"; };
+		C5740D081E03523100567DD8 /* BuildSystemFrontendTest.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BuildSystemFrontendTest.cpp; sourceTree = "<group>"; };
+		C5740D0D1E0352D800567DD8 /* CMakeLists.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = CMakeLists.txt; sourceTree = "<group>"; };
 		E104FAF61B655A97005C68A0 /* BuildSystemPerfTests.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = BuildSystemPerfTests.mm; sourceTree = "<group>"; };
 		E104FAFF1B6568E0005C68A0 /* BuildSystem.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BuildSystem.cpp; sourceTree = "<group>"; };
 		E1066C071BC5ACAB00B892CE /* LaneBasedExecutionQueue.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = LaneBasedExecutionQueue.cpp; sourceTree = "<group>"; };
 		E1066C091BC5BCE700B892CE /* LLVM.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LLVM.h; sourceTree = "<group>"; };
+		E1075ED61E4EA417007D52C6 /* BuildSystemTaskTests.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BuildSystemTaskTests.cpp; sourceTree = "<group>"; };
 		E10D5CDA19FEBF6A00211ED4 /* LitXCTestAdaptor.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LitXCTestAdaptor.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E10D5CDD19FEBF6A00211ED4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E10D5CDE19FEBF6A00211ED4 /* LitTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LitTests.m; sourceTree = "<group>"; };
@@ -644,11 +728,20 @@
 		E11470921B752E7000ED84CF /* BuildKey.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BuildKey.h; sourceTree = "<group>"; };
 		E11470931B7554F800ED84CF /* FileInfo.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = FileInfo.cpp; sourceTree = "<group>"; };
 		E1192CEC1C49D84500F85890 /* buildsystem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = buildsystem.h; sourceTree = "<group>"; };
+		E11F2B7D1E4D253B00176BAD /* BuildDescription.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BuildDescription.h; sourceTree = "<group>"; };
+		E11F2B7E1E4D255B00176BAD /* BuildDescription.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BuildDescription.cpp; sourceTree = "<group>"; };
+		E120B9EB1E4E65EB00B28469 /* BinaryCodingTests.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BinaryCodingTests.cpp; sourceTree = "<group>"; };
+		E120B9EC1E4E65EB00B28469 /* ShellUtilityTest.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ShellUtilityTest.cpp; sourceTree = "<group>"; };
+		E120B9EF1E4E65FC00B28469 /* BinaryCoding.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = BinaryCoding.h; sourceTree = "<group>"; };
+		E120B9F01E4E669F00B28469 /* BinaryCodingPerfTests.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = BinaryCodingPerfTests.mm; sourceTree = "<group>"; };
 		E12E12A71AD50AE500ACE7B3 /* CommandLineStatusOutput.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = CommandLineStatusOutput.cpp; sourceTree = "<group>"; };
 		E12E12A81AD50AE500ACE7B3 /* CommandLineStatusOutput.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CommandLineStatusOutput.h; sourceTree = "<group>"; };
 		E138129C1C536CFC000092C0 /* FileSystem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = FileSystem.h; sourceTree = "<group>"; };
 		E138129D1C536D0E000092C0 /* FileSystem.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = FileSystem.cpp; sourceTree = "<group>"; };
 		E13812A11C53708E000092C0 /* FileSystemTest.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = FileSystemTest.cpp; sourceTree = "<group>"; };
+		E14144921EBDA4A10046F282 /* Common.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Common.xcconfig; sourceTree = "<group>"; };
+		E14144931EBDA4A10046F282 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		E14144941EBDA4A10046F282 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		E147DEFA1BA81CF70032D08E /* SerialQueue.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SerialQueue.cpp; sourceTree = "<group>"; };
 		E147DEFC1BA81D0E0032D08E /* SerialQueue.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SerialQueue.h; sourceTree = "<group>"; };
 		E147DEFD1BA81D0E0032D08E /* Hashing.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Hashing.h; sourceTree = "<group>"; };
@@ -669,8 +762,7 @@
 		E17C29F31B5AC2A700C12DA9 /* build-sphinx-docs.sh */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.sh; path = "build-sphinx-docs.sh"; sourceTree = "<group>"; };
 		E18043391A00129400662FE7 /* install-user-lit.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-user-lit.sh"; sourceTree = "<group>"; };
 		E182BE111ABA2B8D001840AD /* Compiler.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Compiler.h; sourceTree = "<group>"; };
-		E19C3F171B98B3CB0035E1AA /* extract-perf-data */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = "extract-perf-data"; sourceTree = "<group>"; };
-		E19C3F181B98B3CB0035E1AA /* xcs-submit-perf-data.sh */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.script.sh; path = "xcs-submit-perf-data.sh"; sourceTree = "<group>"; };
+		E192E92E1E30014E00122F17 /* BuildValueTest.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BuildValueTest.cpp; sourceTree = "<group>"; };
 		E19C3FD51B98C1A70035E1AA /* tests */ = {isa = PBXFileReference; lastKnownFileType = folder; path = tests; sourceTree = "<group>"; };
 		E19D79911A15D9E6002604FB /* MakefileDepsParser.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = MakefileDepsParser.cpp; sourceTree = "<group>"; };
 		E19D79931A15D9F5002604FB /* MakefileDepsParser.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MakefileDepsParser.h; sourceTree = "<group>"; };
@@ -770,6 +862,8 @@
 		E1ADC2341A85928100D5387C /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		E1ADC2351A8592AA00D5387C /* llbuild.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = llbuild.h; sourceTree = "<group>"; };
 		E1ADC23A1A85936400D5387C /* libllbuild.dylib */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.dylib"; includeInIndex = 0; path = libllbuild.dylib; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1B3B9DA1E4D5A7A00DF1FBC /* MockBuildSystemDelegate.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = MockBuildSystemDelegate.cpp; sourceTree = "<group>"; };
+		E1B3B9DB1E4D5A7A00DF1FBC /* MockBuildSystemDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = MockBuildSystemDelegate.h; sourceTree = "<group>"; };
 		E1B49EF91B6BD45D0031AFC2 /* BuildSystemCommandInterface.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BuildSystemCommandInterface.h; sourceTree = "<group>"; };
 		E1B49EFA1B6BD45D0031AFC2 /* BuildSystem.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BuildSystem.h; sourceTree = "<group>"; };
 		E1B838A21B52E7DE00DB876B /* libllvmSupport.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libllvmSupport.a; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -911,6 +1005,21 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		9DB047A51DF9D43D006CDF52 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9D2107C61DFADDFA00BE26FF /* libcurses.dylib in Frameworks */,
+				C5740D0C1E03529300567DD8 /* libsqlite3.dylib in Frameworks */,
+				C5740D0B1E03528600567DD8 /* libllbuildBasic.a in Frameworks */,
+				C5740D0A1E03527B00567DD8 /* libllbuildCore.a in Frameworks */,
+				9DB047BD1DF9D4B0006CDF52 /* libllbuildBuildSystem.a in Frameworks */,
+				9DB047BC1DF9D4AA006CDF52 /* libllvmSupport.a in Frameworks */,
+				9DB047BA1DF9D4A4006CDF52 /* libgtest_main.a in Frameworks */,
+				9DB047BB1DF9D4A4006CDF52 /* libgtest.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E10D5CD719FEBF6A00211ED4 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -1084,6 +1193,22 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		9DB0478A1DF9D39E006CDF52 /* BuildSystem */ = {
+			isa = PBXGroup;
+			children = (
+				C5740D0D1E0352D800567DD8 /* CMakeLists.txt */,
+				C5740D081E03523100567DD8 /* BuildSystemFrontendTest.cpp */,
+				E1075ED61E4EA417007D52C6 /* BuildSystemTaskTests.cpp */,
+				E192E92E1E30014E00122F17 /* BuildValueTest.cpp */,
+				E1B3B9DA1E4D5A7A00DF1FBC /* MockBuildSystemDelegate.cpp */,
+				E1B3B9DB1E4D5A7A00DF1FBC /* MockBuildSystemDelegate.h */,
+				9DB0478B1DF9D3E2006CDF52 /* LaneBasedExecutionQueueTest.cpp */,
+				9D0A6D7F1E1FFEA800BE636F /* TempDir.cpp */,
+				9D0A6D801E1FFEA800BE636F /* TempDir.h */,
+			);
+			path = BuildSystem;
+			sourceTree = "<group>";
+		};
 		E10D5CDB19FEBF6A00211ED4 /* LitXCTestAdaptor */ = {
 			isa = PBXGroup;
 			children = (
@@ -1112,12 +1237,32 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		E14144901EBDA4A10046F282 /* Xcode */ = {
+			isa = PBXGroup;
+			children = (
+				E14144911EBDA4A10046F282 /* Configs */,
+			);
+			path = Xcode;
+			sourceTree = "<group>";
+		};
+		E14144911EBDA4A10046F282 /* Configs */ = {
+			isa = PBXGroup;
+			children = (
+				E14144921EBDA4A10046F282 /* Common.xcconfig */,
+				E14144931EBDA4A10046F282 /* Debug.xcconfig */,
+				E14144941EBDA4A10046F282 /* Release.xcconfig */,
+			);
+			path = Configs;
+			sourceTree = "<group>";
+		};
 		E147DF171BA81D4E0032D08E /* Basic */ = {
 			isa = PBXGroup;
 			children = (
 				E147DF181BA81D4E0032D08E /* CMakeLists.txt */,
+				E120B9EB1E4E65EB00B28469 /* BinaryCodingTests.cpp */,
 				E13812A11C53708E000092C0 /* FileSystemTest.cpp */,
 				E147DF191BA81D4E0032D08E /* SerialQueueTest.cpp */,
+				E120B9EC1E4E65EB00B28469 /* ShellUtilityTest.cpp */,
 			);
 			path = Basic;
 			sourceTree = "<group>";
@@ -1134,6 +1279,7 @@
 		E1A223E819F98F1C0059043E = {
 			isa = PBXGroup;
 			children = (
+				E14144901EBDA4A10046F282 /* Xcode */,
 				E1A223FD19F990F10059043E /* products */,
 				E1A2240419F991530059043E /* lib */,
 				E19C3FD51B98C1A70035E1AA /* tests */,
@@ -1167,6 +1313,7 @@
 				E1B839571B541BFD00DB876B /* libllbuildBuildSystem.a */,
 				E147DF161BA81D330032D08E /* BasicTests */,
 				E1604CB11BB9E01D001153A1 /* swift-build-tool */,
+				9DB047A81DF9D43D006CDF52 /* BuildSystemTests */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -1214,6 +1361,7 @@
 				E11470931B7554F800ED84CF /* FileInfo.cpp */,
 				E138129D1C536D0E000092C0 /* FileSystem.cpp */,
 				E1FE53401AB1343B00041B8E /* Hashing.cpp */,
+				9DADBBAC1E256C52005B4869 /* PlatformUtility.cpp */,
 				E147DEFA1BA81CF70032D08E /* SerialQueue.cpp */,
 				E17440C21CE192FF0070A30C /* ShellUtility.cpp */,
 				E1A2240719F991530059043E /* Version.cpp */,
@@ -1272,11 +1420,13 @@
 		E1A2244F19F997D40059043E /* Headers */ = {
 			isa = PBXGroup;
 			children = (
+				E120B9EF1E4E65FC00B28469 /* BinaryCoding.h */,
 				E182BE111ABA2B8D001840AD /* Compiler.h */,
 				E11470901B75160400ED84CF /* FileInfo.h */,
 				E138129C1C536CFC000092C0 /* FileSystem.h */,
 				E147DEFD1BA81D0E0032D08E /* Hashing.h */,
 				E1066C091BC5BCE700B892CE /* LLVM.h */,
+				9D2589301E3820E3006C76F4 /* PlatformUtility.h */,
 				E147DEFC1BA81D0E0032D08E /* SerialQueue.h */,
 				E17440C11CE192E30070A30C /* ShellUtility.h */,
 				E1A2245119F997D40059043E /* Version.h */,
@@ -1420,6 +1570,7 @@
 			children = (
 				E147DF171BA81D4E0032D08E /* Basic */,
 				E1A224B419F998D40059043E /* Core */,
+				9DB0478A1DF9D39E006CDF52 /* BuildSystem */,
 				E1A224B819F998D40059043E /* Ninja */,
 				E1A224B319F998D40059043E /* CMakeLists.txt */,
 			);
@@ -1434,6 +1585,7 @@
 				E1A0B1001C9717BA006DA08F /* DependencyInfoParserTest.cpp */,
 				E10FE0D61B7313D50059D086 /* DepsBuildEngineTest.cpp */,
 				E19D79941A15DA06002604FB /* MakefileDepsParserTest.cpp */,
+				9DDD8BDF1DDCAB9A00FB62D2 /* SQLiteBuildDBTest.cpp */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -1456,10 +1608,8 @@
 				E17C29E41B5AAA2F00C12DA9 /* create-target-link.sh */,
 				E1A2255019F9A74B0059043E /* create-lit-site-cfg.sh */,
 				E1A2255119F9A74B0059043E /* execute-lit-tests.sh */,
-				E19C3F171B98B3CB0035E1AA /* extract-perf-data */,
 				E18043391A00129400662FE7 /* install-user-lit.sh */,
 				E17C29F21B5AC18C00C12DA9 /* install-user-sphinx.sh */,
-				E19C3F181B98B3CB0035E1AA /* xcs-submit-perf-data.sh */,
 			);
 			path = Xcode;
 			sourceTree = "<group>";
@@ -1671,6 +1821,7 @@
 			children = (
 				E1B8395C1B541C4300DB876B /* Headers */,
 				E1B8395A1B541C1F00DB876B /* CMakeLists.txt */,
+				E11F2B7E1E4D255B00176BAD /* BuildDescription.cpp */,
 				E1BE0AA51C458EB000AD0883 /* BuildExecutionQueue.cpp */,
 				E1B839591B541C1F00DB876B /* BuildFile.cpp */,
 				E1E4A5B31BFC1394001BFFC4 /* BuildKey.cpp */,
@@ -1688,16 +1839,18 @@
 		E1B8395C1B541C4300DB876B /* Headers */ = {
 			isa = PBXGroup;
 			children = (
-				54E187B61CD296EA00F7EC89 /* BuildNode.h */,
-				54E187B71CD296EA00F7EC89 /* ExternalCommand.h */,
-				54E187B81CD296EA00F7EC89 /* SwiftTools.h */,
+				E11F2B7D1E4D253B00176BAD /* BuildDescription.h */,
 				E10FE0D51B6FF2000059D086 /* BuildExecutionQueue.h */,
 				E1B8395D1B541C4300DB876B /* BuildFile.h */,
 				E11470921B752E7000ED84CF /* BuildKey.h */,
+				54E187B61CD296EA00F7EC89 /* BuildNode.h */,
 				E1B49EFA1B6BD45D0031AFC2 /* BuildSystem.h */,
 				E1B49EF91B6BD45D0031AFC2 /* BuildSystemCommandInterface.h */,
 				E1AAD28B1BC60A0F00F54680 /* BuildSystemFrontend.h */,
 				E11470911B7517C800ED84CF /* BuildValue.h */,
+				9D2589311E38221D006C76F4 /* CommandResult.h */,
+				54E187B71CD296EA00F7EC89 /* ExternalCommand.h */,
+				54E187B81CD296EA00F7EC89 /* SwiftTools.h */,
 			);
 			name = Headers;
 			path = include/llbuild/BuildSystem;
@@ -1707,6 +1860,7 @@
 			isa = PBXGroup;
 			children = (
 				E1C404AE1A0308F3003392BA /* Supporting Files */,
+				E120B9F01E4E669F00B28469 /* BinaryCodingPerfTests.mm */,
 				E104FAF61B655A97005C68A0 /* BuildSystemPerfTests.mm */,
 				E171538C1A0BF702004CD598 /* CorePerfTests.mm */,
 				E1C404B01A0308F3003392BA /* NinjaPerfTests.mm */,
@@ -1837,6 +1991,28 @@
 /* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
+		9DB047A71DF9D43D006CDF52 /* BuildSystemTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9DB047AC1DF9D43D006CDF52 /* Build configuration list for PBXNativeTarget "BuildSystemTests" */;
+			buildPhases = (
+				9DB047A41DF9D43D006CDF52 /* Sources */,
+				9DB047A51DF9D43D006CDF52 /* Frameworks */,
+				9DB047A61DF9D43D006CDF52 /* CopyFiles */,
+				9D2107C51DFA07D700BE26FF /* Create Target Link */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9DB047B81DF9D483006CDF52 /* PBXTargetDependency */,
+				9DB047B41DF9D471006CDF52 /* PBXTargetDependency */,
+				9DB047B21DF9D469006CDF52 /* PBXTargetDependency */,
+				9DB047B01DF9D464006CDF52 /* PBXTargetDependency */,
+			);
+			name = BuildSystemTests;
+			productName = BuildSystemTests;
+			productReference = 9DB047A81DF9D43D006CDF52 /* BuildSystemTests */;
+			productType = "com.apple.product-type.tool";
+		};
 		E10D5CD919FEBF6A00211ED4 /* LitXCTestAdaptor */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E10D5CE219FEBF6A00211ED4 /* Build configuration list for PBXNativeTarget "LitXCTestAdaptor" */;
@@ -1848,6 +2024,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				9D2107C41DF9FBFA00BE26FF /* PBXTargetDependency */,
 				E18043341A00123600662FE7 /* PBXTargetDependency */,
 				E180436E1A001E6C00662FE7 /* PBXTargetDependency */,
 				E1DE1CC01BB9E34700A902C1 /* PBXTargetDependency */,
@@ -2180,9 +2357,13 @@
 		E1A223E919F98F1C0059043E /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastUpgradeCheck = 0730;
+				LastUpgradeCheck = 9900;
 				ORGANIZATIONNAME = "Apple Inc.";
 				TargetAttributes = {
+					9DB047A71DF9D43D006CDF52 = {
+						CreatedOnToolsVersion = 8.3;
+						ProvisioningStyle = Automatic;
+					};
 					E10D5CD919FEBF6A00211ED4 = {
 						CreatedOnToolsVersion = 6.3;
 						ProvisioningStyle = Manual;
@@ -2280,6 +2461,7 @@
 				E178FCC11A1BF3270039F8B5 /* B&I */,
 				E1A224C219F999B80059043E /* llbuild Tool */,
 				E1604C951BB9E01D001153A1 /* swift-build-tool */,
+				E1D191BD1B47232B000C4E95 /* llbuild-framework */,
 				E1ADC2391A85936400D5387C /* libllbuild */,
 				E1B838981B52E7DE00DB876B /* llvmSupport */,
 				E1A2242419F991B40059043E /* llbuildBasic */,
@@ -2291,13 +2473,13 @@
 				E1A224E519F99C580059043E /* gtest_main */,
 				E147DEFE1BA81D330032D08E /* BasicTests */,
 				E1A224EE19F99D880059043E /* CoreTests */,
+				9DB047A71DF9D43D006CDF52 /* BuildSystemTests */,
 				E1A224F819F99DFD0059043E /* NinjaTests */,
 				E180432F1A00122900662FE7 /* Lit-Tests-Setup */,
 				E17C29ED1B5AC12B00C12DA9 /* Sphinx-Docs */,
 				E1A2254219F9A20D0059043E /* test */,
 				E10D5CD919FEBF6A00211ED4 /* LitXCTestAdaptor */,
 				E1C404AB1A0308F3003392BA /* PerfTests */,
-				E1D191BD1B47232B000C4E95 /* llbuild-framework */,
 			);
 		};
 /* End PBXProject section */
@@ -2328,6 +2510,20 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		9D2107C51DFA07D700BE26FF /* Create Target Link */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Create Target Link";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/utils/Xcode/create-target-link.sh\"";
+		};
 		E147DF121BA81D330032D08E /* Create Target Link */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -2454,6 +2650,19 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		9DB047A41DF9D43D006CDF52 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E192E92F1E30014E00122F17 /* BuildValueTest.cpp in Sources */,
+				9DB047C01DF9F592006CDF52 /* LaneBasedExecutionQueueTest.cpp in Sources */,
+				C5740D091E03523100567DD8 /* BuildSystemFrontendTest.cpp in Sources */,
+				9D0A6D811E1FFEA800BE636F /* TempDir.cpp in Sources */,
+				E1075ED71E4EA417007D52C6 /* BuildSystemTaskTests.cpp in Sources */,
+				E1B3B9DC1E4D5A7A00DF1FBC /* MockBuildSystemDelegate.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E10D5CD619FEBF6A00211ED4 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -2466,8 +2675,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9D5A5C311EC5FAE600DC84CC /* TempDir.cpp in Sources */,
 				E13812A21C53708E000092C0 /* FileSystemTest.cpp in Sources */,
+				E120B9EE1E4E65EB00B28469 /* ShellUtilityTest.cpp in Sources */,
 				E147DF1A1BA81D5A0032D08E /* SerialQueueTest.cpp in Sources */,
+				E120B9ED1E4E65EB00B28469 /* BinaryCodingTests.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2483,6 +2695,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9DADBBAD1E256C73005B4869 /* PlatformUtility.cpp in Sources */,
 				E1FE53411AB1346700041B8E /* Hashing.cpp in Sources */,
 				E138129E1C536D0E000092C0 /* FileSystem.cpp in Sources */,
 				E11470941B7555FA00ED84CF /* FileInfo.cpp in Sources */,
@@ -2557,6 +2770,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9DDD8BE11DDCAB9A00FB62D2 /* SQLiteBuildDBTest.cpp in Sources */,
 				E19D79951A15DA06002604FB /* MakefileDepsParserTest.cpp in Sources */,
 				E1A0B1011C9717BA006DA08F /* DependencyInfoParserTest.cpp in Sources */,
 				E1A224F619F99D940059043E /* BuildEngineTest.cpp in Sources */,
@@ -2633,6 +2847,7 @@
 				E1AAD28E1BC65A1900F54680 /* BuildNode.cpp in Sources */,
 				E1FC67F91BB1F427004EBC54 /* BuildValue.cpp in Sources */,
 				E1BE0AA61C458EB000AD0883 /* BuildExecutionQueue.cpp in Sources */,
+				E11F2B7F1E4D255B00176BAD /* BuildDescription.cpp in Sources */,
 				E1AAD2921BC65B5000F54680 /* SwiftTools.cpp in Sources */,
 				E1E4A5B41BFC1394001BFFC4 /* BuildKey.cpp in Sources */,
 				E1B8395E1B541C5900DB876B /* BuildFile.cpp in Sources */,
@@ -2645,6 +2860,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E1C404B11A0308F3003392BA /* NinjaPerfTests.mm in Sources */,
+				E120B9F11E4E669F00B28469 /* BinaryCodingPerfTests.mm in Sources */,
 				E171538D1A0BF702004CD598 /* CorePerfTests.mm in Sources */,
 				E104FAF71B655A97005C68A0 /* BuildSystemPerfTests.mm in Sources */,
 			);
@@ -2663,6 +2879,36 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		9D2107C41DF9FBFA00BE26FF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9DB047A71DF9D43D006CDF52 /* BuildSystemTests */;
+			targetProxy = 9D2107C31DF9FBFA00BE26FF /* PBXContainerItemProxy */;
+		};
+		9DB047B01DF9D464006CDF52 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E1A224DC19F99B0E0059043E /* gtest */;
+			targetProxy = 9DB047AF1DF9D464006CDF52 /* PBXContainerItemProxy */;
+		};
+		9DB047B21DF9D469006CDF52 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E1A224E519F99C580059043E /* gtest_main */;
+			targetProxy = 9DB047B11DF9D469006CDF52 /* PBXContainerItemProxy */;
+		};
+		9DB047B41DF9D471006CDF52 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E1B838981B52E7DE00DB876B /* llvmSupport */;
+			targetProxy = 9DB047B31DF9D471006CDF52 /* PBXContainerItemProxy */;
+		};
+		9DB047B81DF9D483006CDF52 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E1B839481B541BFD00DB876B /* llbuildBuildSystem */;
+			targetProxy = 9DB047B71DF9D483006CDF52 /* PBXContainerItemProxy */;
+		};
+		9DB047BF1DF9D4B8006CDF52 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9DB047A71DF9D43D006CDF52 /* BuildSystemTests */;
+			targetProxy = 9DB047BE1DF9D4B8006CDF52 /* PBXContainerItemProxy */;
+		};
 		E104FAF91B655BB2005C68A0 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = E1B839481B541BFD00DB876B /* llbuildBuildSystem */;
@@ -2926,10 +3172,31 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		9DB047AD1DF9D43D006CDF52 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"GTEST_HAS_RTTI=0",
+				);
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include $(SRCROOT)/utils/unittest/googletest/include";
+			};
+			name = Debug;
+		};
+		9DB047AE1DF9D43D006CDF52 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					NDEBUG,
+					"GTEST_HAS_RTTI=0",
+				);
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include $(SRCROOT)/utils/unittest/googletest/include";
+			};
+			name = Release;
+		};
 		E10D5CE019FEBF6A00211ED4 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				COMBINE_HIDPI_IMAGES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(DEVELOPER_FRAMEWORKS_DIR)",
 					"$(inherited)",
@@ -2938,17 +3205,15 @@
 					"$(inherited)",
 					"\"BUILT_PRODUCTS_DIR=\\\"$(BUILT_PRODUCTS_DIR)\\\"\"",
 				);
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				INFOPLIST_FILE = utils/Xcode/LitXCTestAdaptor/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.$(PRODUCT_NAME:rfc1034identifier)";
 			};
 			name = Debug;
 		};
 		E10D5CE119FEBF6A00211ED4 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				COMBINE_HIDPI_IMAGES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(DEVELOPER_FRAMEWORKS_DIR)",
 					"$(inherited)",
@@ -2957,10 +3222,9 @@
 					"$(inherited)",
 					"\"BUILT_PRODUCTS_DIR=\\\"$(BUILT_PRODUCTS_DIR)\\\"\"",
 				);
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				INFOPLIST_FILE = utils/Xcode/LitXCTestAdaptor/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.$(PRODUCT_NAME:rfc1034identifier)";
 			};
 			name = Release;
 		};
@@ -2971,8 +3235,6 @@
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				LIBRARY_SEARCH_PATHS = "$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include $(SRCROOT)/utils/unittest/googletest/include";
 			};
 			name = Debug;
@@ -2984,8 +3246,6 @@
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				LIBRARY_SEARCH_PATHS = "$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include $(SRCROOT)/utils/unittest/googletest/include";
 			};
 			name = Release;
@@ -2993,8 +3253,8 @@
 		E1604CAF1BB9E01D001153A1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				CODE_SIGN_IDENTITY = "$(LLBUILD_CODE_SIGN_IDENTITY)";
+				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/bin";
 				SKIP_INSTALL = NO;
 			};
 			name = Debug;
@@ -3002,8 +3262,8 @@
 		E1604CB01BB9E01D001153A1 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				CODE_SIGN_IDENTITY = "$(LLBUILD_CODE_SIGN_IDENTITY)";
+				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/bin";
 				SKIP_INSTALL = NO;
 			};
 			name = Release;
@@ -3011,47 +3271,42 @@
 		E178FCC21A1BF3270039F8B5 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E178FCC31A1BF3270039F8B5 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
 		E17C29EE1B5AC12B00C12DA9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E17C29EF1B5AC12B00C12DA9 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
 		E18043301A00122900662FE7 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E18043311A00122900662FE7 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
 		E1A223F619F98F1C0059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E14144931EBDA4A10046F282 /* Debug.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_CXX_LANGUAGE_STANDARD = "c++14";
@@ -3059,24 +3314,34 @@
 				CLANG_ENABLE_CODE_COVERAGE = "$(LLBUILD_ENABLE_CODE_COVERAGE)";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
 				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
 				CLANG_WARN_CONSTANT_CONVERSION = YES;
 				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
 				CLANG_WARN_EMPTY_BODY = YES;
 				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
 				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu99;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_ENABLE_CPP_EXCEPTIONS = NO;
 				GCC_ENABLE_CPP_RTTI = NO;
 				GCC_INLINES_ARE_PRIVATE_EXTERN = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_SYMBOLS_PRIVATE_EXTERN = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
@@ -3102,6 +3367,7 @@
 		};
 		E1A223F719F98F1C0059043E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E14144941EBDA4A10046F282 /* Release.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_CXX_LANGUAGE_STANDARD = "c++14";
@@ -3109,13 +3375,20 @@
 				CLANG_ENABLE_CODE_COVERAGE = "$(LLBUILD_ENABLE_CODE_COVERAGE)";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
 				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
 				CLANG_WARN_CONSTANT_CONVERSION = YES;
 				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
 				CLANG_WARN_EMPTY_BODY = YES;
 				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
 				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
@@ -3126,8 +3399,10 @@
 				GCC_ENABLE_CPP_EXCEPTIONS = NO;
 				GCC_ENABLE_CPP_RTTI = NO;
 				GCC_INLINES_ARE_PRIVATE_EXTERN = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = NDEBUG;
 				GCC_SYMBOLS_PRIVATE_EXTERN = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
@@ -3153,80 +3428,65 @@
 		E1A2242719F991B40059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"LLBUILD_VERSION_STRING=\\\"$(LLBUILD_VERSION_STRING)\\\"",
 				);
 				LLBUILD_VERSION_STRING = "llbuild-$(PROJECT_SOURCE_VERSION)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E1A2242819F991B40059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"LLBUILD_VERSION_STRING=\\\"$(LLBUILD_VERSION_STRING)\\\"",
 				);
 				LLBUILD_VERSION_STRING = "llbuild-$(PROJECT_SOURCE_VERSION)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
 		E1A2243019F997050059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E1A2243119F997050059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
 		E1A2243819F9970D0059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E1A2243919F9970D0059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
 		E1A2244019F997150059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E1A2244119F997150059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
 		E1A224C819F999B80059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_IDENTITY = "$(LLBUILD_CODE_SIGN_IDENTITY)";
 				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
 				PRODUCT_NAME = llbuild;
 				SKIP_INSTALL = NO;
@@ -3236,6 +3496,7 @@
 		E1A224C919F999B80059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_IDENTITY = "$(LLBUILD_CODE_SIGN_IDENTITY)";
 				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
 				PRODUCT_NAME = llbuild;
 				SKIP_INSTALL = NO;
@@ -3245,12 +3506,10 @@
 		E1A224DF19F99B0E0059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/utils/unittest/googletest/include $(SRCROOT)/utils/unittest/googletest";
 			};
 			name = Debug;
@@ -3258,12 +3517,10 @@
 		E1A224E019F99B0E0059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/utils/unittest/googletest/include $(SRCROOT)/utils/unittest/googletest";
 			};
 			name = Release;
@@ -3271,13 +3528,10 @@
 		E1A224E819F99C580059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				EXECUTABLE_PREFIX = lib;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/utils/unittest/googletest/include";
 			};
 			name = Debug;
@@ -3285,13 +3539,10 @@
 		E1A224E919F99C580059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				EXECUTABLE_PREFIX = lib;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/utils/unittest/googletest/include";
 			};
 			name = Release;
@@ -3303,8 +3554,6 @@
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				LIBRARY_SEARCH_PATHS = "$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include $(SRCROOT)/utils/unittest/googletest/include";
 			};
 			name = Debug;
@@ -3312,13 +3561,10 @@
 		E1A224F519F99D880059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				DEBUG_INFORMATION_FORMAT = dwarf;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				LIBRARY_SEARCH_PATHS = "$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include $(SRCROOT)/utils/unittest/googletest/include";
 			};
 			name = Release;
@@ -3330,8 +3576,6 @@
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				LIBRARY_SEARCH_PATHS = "$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include $(SRCROOT)/utils/unittest/googletest/include";
 			};
 			name = Debug;
@@ -3339,13 +3583,10 @@
 		E1A2250019F99DFD0059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				DEBUG_INFORMATION_FORMAT = dwarf;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"GTEST_HAS_RTTI=0",
 				);
-				LIBRARY_SEARCH_PATHS = "$(BUILD_DIR)/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/include $(SRCROOT)/utils/unittest/googletest/include";
 			};
 			name = Release;
@@ -3353,14 +3594,12 @@
 		E1A2254419F9A20D0059043E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E1A2254519F9A20D0059043E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
@@ -3370,11 +3609,8 @@
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = "$(PROJECT_SOURCE_VERSION)";
 				DYLIB_INSTALL_NAME_BASE = "@rpath";
-				EXECUTABLE_PREFIX = lib;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/products/libllbuild/public-api";
 				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/lib";
-				MACOSX_DEPLOYMENT_TARGET = 10.10;
-				PRODUCT_NAME = llbuild;
 				PUBLIC_HEADERS_FOLDER_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/include/llbuild";
 				SKIP_INSTALL = NO;
 			};
@@ -3386,11 +3622,8 @@
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = "$(PROJECT_SOURCE_VERSION)";
 				DYLIB_INSTALL_NAME_BASE = "@rpath";
-				EXECUTABLE_PREFIX = lib;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/products/libllbuild/public-api";
 				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/lib";
-				MACOSX_DEPLOYMENT_TARGET = 10.10;
-				PRODUCT_NAME = llbuild;
 				PUBLIC_HEADERS_FOLDER_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/include/llbuild";
 				SKIP_INSTALL = NO;
 			};
@@ -3400,9 +3633,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_CODE_COVERAGE = NO;
-				EXECUTABLE_PREFIX = lib;
+				CLANG_WARN_COMMA = NO;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/include";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
@@ -3410,25 +3642,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_CODE_COVERAGE = NO;
-				EXECUTABLE_PREFIX = lib;
+				CLANG_WARN_COMMA = NO;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/include";
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
 		E1B839551B541BFD00DB876B /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
 		};
 		E1B839561B541BFD00DB876B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				EXECUTABLE_PREFIX = lib;
-				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
 		};
@@ -3445,7 +3672,7 @@
 					"\"TEST_TEMPS_PATH=\\\"$(CONFIGURATION_TEMP_DIR)/test-temps\\\"\"",
 				);
 				INFOPLIST_FILE = perftests/Xcode/PerfTests/Info.plist;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.NinjaPerfTests;
 			};
 			name = Debug;
 		};
@@ -3462,19 +3689,19 @@
 					"\"TEST_TEMPS_PATH=\\\"$(CONFIGURATION_TEMP_DIR)/test-temps\\\"\"",
 				);
 				INFOPLIST_FILE = perftests/Xcode/PerfTests/Info.plist;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.apple.NinjaPerfTests;
 			};
 			name = Release;
 		};
 		E1D191C41B47232B000C4E95 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_IDENTITY = "$(LLBUILD_CODE_SIGN_IDENTITY)";
 				CURRENT_PROJECT_VERSION = 1;
 				DEFINES_MODULE = YES;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = "$(PROJECT_SOURCE_VERSION)";
 				DYLIB_INSTALL_NAME_BASE = "@rpath";
-				GCC_NO_COMMON_BLOCKS = YES;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/products/libllbuild/public-api";
 				INFOPLIST_FILE = "$(SRCROOT)/products/llbuild-framework/Info.plist";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
@@ -3489,12 +3716,12 @@
 		E1D191C51B47232B000C4E95 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_IDENTITY = "$(LLBUILD_CODE_SIGN_IDENTITY)";
 				CURRENT_PROJECT_VERSION = 1;
 				DEFINES_MODULE = YES;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = "$(PROJECT_SOURCE_VERSION)";
 				DYLIB_INSTALL_NAME_BASE = "@rpath";
-				GCC_NO_COMMON_BLOCKS = YES;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/products/libllbuild/public-api";
 				INFOPLIST_FILE = "$(SRCROOT)/products/llbuild-framework/Info.plist";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
@@ -3509,6 +3736,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		9DB047AC1DF9D43D006CDF52 /* Build configuration list for PBXNativeTarget "BuildSystemTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9DB047AD1DF9D43D006CDF52 /* Debug */,
+				9DB047AE1DF9D43D006CDF52 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		E10D5CE219FEBF6A00211ED4 /* Build configuration list for PBXNativeTarget "LitXCTestAdaptor" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -26,6 +26,7 @@ namespace buildsystem {
 
 class BuildExecutionQueueDelegate;
 class Command;
+enum class CommandResult;
 
 /// Opaque type which allows the queue implementation to maintain additional
 /// state and associate subsequent requests (e.g., \see executeProcess()) with
@@ -85,6 +86,9 @@ public:
   /// Add a job to be executed.
   virtual void addJob(QueueJob job) = 0;
 
+  /// Cancel all jobs and subprocesses of this queue.
+  virtual void cancelAllJobs() = 0;
+
   /// @name Execution Interfaces
   ///
   /// These are additional interfaces provided by the execution queue which can
@@ -104,22 +108,26 @@ public:
   ///
   /// \param commandLine The command line to execute.
   ///
-  /// \param environment The environment to launch with. If empty, the process
-  /// environment will be inherited.
+  /// \param environment The environment to launch with.
   ///
-  /// \returns True on success.
+  /// \param inheritEnvironment If true, the supplied environment will be
+  /// overlayed on top base environment supplied when creating the queue. If
+  /// false, only the supplied environment will be passed to the subprocess.
+  ///
+  /// \returns Result of the process execution.
   //
   // FIXME: This interface will need to get more complicated, and provide the
   // command result and facilities for dealing with the output.
-  virtual bool
+  virtual CommandResult
   executeProcess(QueueJobContext* context,
                  ArrayRef<StringRef> commandLine,
-                 ArrayRef<std::pair<StringRef, StringRef>> environment) = 0;
+                 ArrayRef<std::pair<StringRef, StringRef>> environment,
+                 bool inheritEnvironment = true) = 0;
 
   /// @}
 
   /// Execute the given command, using an inherited environment.
-  bool executeProcess(QueueJobContext* context,
+  CommandResult executeProcess(QueueJobContext* context,
                       ArrayRef<StringRef> commandLine);
 
   /// Execute the given command using "/bin/sh".
@@ -142,6 +150,9 @@ public:
 /// All delegate interfaces are invoked synchronously by the execution queue,
 /// and should defer any long running operations to avoid blocking the queue
 /// unnecessarily.
+///
+/// NOTE: The delegate *MUST* be thread-safe with respect to all calls, which
+/// will arrive concurrently and without any specified thread.
 class BuildExecutionQueueDelegate {
   // DO NOT COPY
   BuildExecutionQueueDelegate(const BuildExecutionQueueDelegate&)
@@ -218,19 +229,22 @@ public:
   /// \param handle - The handle used to identify the process. This handle will
   /// become invalid as soon as the client returns from this API call.
   ///
-  /// \param exitStatus - The exit status of the process, or -1 if an error was
-  /// encountered.
+  /// \param result - Whether the process suceeded, failed or was cancelled.
+  /// \param exitStatus - The raw exit status of the process, or -1 if an error
+  /// was encountered.
   //
   // FIXME: Need to include additional information on the status here, e.g., the
   // signal status, and the process output (if buffering).
   virtual void commandProcessFinished(Command*, ProcessHandle handle,
+                                      CommandResult result,
                                       int exitStatus) = 0;
 };
 
 /// Create an execution queue that schedules jobs to individual lanes with a
 /// capped limit on the number of concurrent lanes.
 BuildExecutionQueue *createLaneBasedExecutionQueue(
-    BuildExecutionQueueDelegate& delegate, int numLanes);
+    BuildExecutionQueueDelegate& delegate, int numLanes,
+    const char* const* environment);
 
 }
 }

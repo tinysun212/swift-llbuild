@@ -13,9 +13,12 @@
 #ifndef LLBUILD_BUILDSYSTEM_EXTERNALCOMMAND_H
 #define LLBUILD_BUILDSYSTEM_EXTERNALCOMMAND_H
 
-#include "llbuild/BuildSystem/BuildFile.h"
+#include "llbuild/BuildSystem/BuildDescription.h"
 #include "llbuild/BuildSystem/BuildSystem.h"
+#include "llbuild/BuildSystem/BuildValue.h"
+#include "llbuild/BuildSystem/CommandResult.h"
 
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <string>
@@ -65,8 +68,8 @@ class ExternalCommand : public Command {
   /// The previous build result command signature, if available.
   uint64_t priorResultCommandSignature;
   
-  /// If true, the command should be skipped (because of an error in an input).
-  bool shouldSkip = false;
+  /// If not None, the command should be skipped with the provided BuildValue.
+  llvm::Optional<BuildValue> skipValue;
 
   /// If true, the command had a missing input (this implies ShouldSkip is
   /// true).
@@ -96,9 +99,9 @@ protected:
   virtual uint64_t getSignature();
 
   /// Extension point for subclasses, to actually execute the command.
-  virtual bool executeExternalCommand(BuildSystemCommandInterface& bsci,
-                                      core::Task* task,
-                                      QueueJobContext* context) = 0;
+  virtual CommandResult executeExternalCommand(BuildSystemCommandInterface& bsci,
+                                               core::Task* task,
+                                               QueueJobContext* context) = 0;
   
 public:
   using Command::Command;
@@ -135,8 +138,9 @@ public:
                             uintptr_t inputID,
                             const BuildValue& value) override;
 
-  virtual void inputsAvailable(BuildSystemCommandInterface& bsci,
-                               core::Task* task) override;
+  virtual BuildValue execute(BuildSystemCommandInterface& bsci,
+                             core::Task* task,
+                             QueueJobContext* context) override;
 };
 
 }

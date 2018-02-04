@@ -15,6 +15,7 @@
 #include "llbuild/Basic/Compiler.h"
 #include "llbuild/Basic/FileInfo.h"
 #include "llbuild/Basic/Hashing.h"
+#include "llbuild/Basic/PlatformUtility.h"
 #include "llbuild/Basic/SerialQueue.h"
 #include "llbuild/Basic/Version.h"
 #include "llbuild/Commands/Commands.h"
@@ -23,11 +24,15 @@
 #include "llbuild/Core/MakefileDepsParser.h"
 #include "llbuild/Ninja/ManifestLoader.h"
 
+#include "llvm/ADT/SmallString.h"
+#include "llvm/Support/TimeValue.h"
+
 #include "CommandLineStatusOutput.h"
 #include "CommandUtil.h"
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <condition_variable>
 #include <cstdarg>
 #include <cstdlib>
@@ -42,30 +47,36 @@
 #include <spawn.h>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/wait.h>
 
 using namespace llbuild;
 using namespace llbuild::basic;
 using namespace llbuild::commands;
 
+#if !defined(_WIN32)
 extern "C" {
   extern char **environ;
 }
+#endif
 
 static uint64_t getTimeInMicroseconds() {
-  struct timeval tv;
-  ::gettimeofday(&tv, nullptr);
-  return tv.tv_sec * 1000000 + tv.tv_usec;
+  llvm::sys::TimeValue now = llvm::sys::TimeValue::now();
+  return now.msec();
 }
 
-static std::string getFormattedString(const char* fmt, va_list ap) {
-  char* buf;
-  if (::vasprintf(&buf, fmt, ap) < 0) {
+static std::string getFormattedString(const char* fmt, va_list ap1) {
+  va_list ap2;
+  va_copy(ap2, ap1);
+  int count = vsnprintf(NULL, 0, fmt, ap1);
+  if (count <= 0) {
     return "unable to format message";
   }
-  std::string result(buf);
-  ::free(buf);
+
+  std::string result = std::string(count, '\0');
+  if (vsnprintf(const_cast<char *>(result.c_str()), count + 1, fmt, ap2) < 0) {
+    return "unable to format message";
+  }
+
   return result;
 }
 
@@ -399,6 +410,8 @@ struct NinjaBuildEngineDelegate : public core::BuildEngineDelegate {
   virtual core::Rule lookupRule(const core::KeyType& key) override;
 
   virtual void cycleDetected(const std::vector<core::Rule*>& items) override;
+
+  virtual void error(const Twine& message) override;
 };
 
 /// Wrapper for information used during a single build.
@@ -486,21 +499,26 @@ public:
 
     // Write to wake up the signal monitoring thread.
     char byte{};
-    write(signalWatchingPipe[1], &byte, 1);
+    sys::write(signalWatchingPipe[1], &byte, 1);
+  }
+
+  void sendSignalToProcesses(int signal) {
+    std::unique_lock<std::mutex> lock(spawnedProcessesMutex);
+
+    for (pid_t pid: spawnedProcesses) {
+      // We are killing the whole process group here, this depends on us
+      // spawning each process in its own group earlier.
+      ::kill(-pid, signal);
+    }
   }
 
   /// Cancel the build in response to an interrupt event.
   void cancelBuildOnInterrupt() {
-    std::lock_guard<std::mutex> guard(spawnedProcessesMutex);
+    sendSignalToProcesses(SIGINT);
 
     emitNote("cancelling build.");
     isCancelled = true;
     wasCancelledBySigint = true;
-
-    // Cancel the spawned processes.
-    for (pid_t pid: spawnedProcesses) {
-      ::kill(-pid, SIGINT);
-    }
 
     // FIXME: In our model, we still wait for everything to terminate, which
     // means a process that refuses to respond to SIGINT will cause us to just
@@ -526,7 +544,7 @@ public:
     // Wait for signal arrival indications.
     while (true) {
       char byte;
-      int res = read(signalWatchingPipe[0], &byte, 1);
+      int res = sys::read(signalWatchingPipe[0], &byte, 1);
 
       // If nothing was read, the pipe has been closed and we should shut down.
       if (res == 0)
@@ -537,7 +555,7 @@ public:
     }
 
     // Shut down the pipe.
-    close(signalWatchingPipe[0]);
+    sys::close(signalWatchingPipe[0]);
     signalWatchingPipe[0] = -1;
   }
 
@@ -565,7 +583,7 @@ public:
     // Create a pipe and thread to watch for signals.
     assert(BuildContext::signalWatchingPipe[0] == -1 &&
            BuildContext::signalWatchingPipe[1] == -1);
-    if (::pipe(BuildContext::signalWatchingPipe) < 0) {
+    if (basic::sys::pipe(BuildContext::signalWatchingPipe) < 0) {
       perror("pipe");
     }
     new std::thread(&BuildContext::signalWaitThread, this);
@@ -583,7 +601,7 @@ public:
     statusOutput.close(&error);
 
     // Close the signal watching pipe.
-    ::close(BuildContext::signalWatchingPipe[1]);
+    sys::close(BuildContext::signalWatchingPipe[1]);
     signalWatchingPipe[1] = -1;
   }
 
@@ -1032,7 +1050,7 @@ buildCommand(BuildContext& context, ninja::Command* command) {
                         ("{ \"name\": \"%s\", \"ph\": \"B\", \"pid\": 0, "
                          "\"tid\": %d, \"ts\": %llu},\n"),
                         localCommand->getEffectiveDescription().c_str(), bucket,
-                        startTime);
+                        static_cast<unsigned long long>(startTime));
               });
           }
 
@@ -1046,7 +1064,7 @@ buildCommand(BuildContext& context, ninja::Command* command) {
                         ("{ \"name\": \"%s\", \"ph\": \"E\", \"pid\": 0, "
                          "\"tid\": %d, \"ts\": %llu},\n"),
                         localCommand->getEffectiveDescription().c_str(), bucket,
-                        endTime);
+                        static_cast<unsigned long long>(endTime));
               });
           }
 #endif
@@ -1175,9 +1193,11 @@ buildCommand(BuildContext& context, ninja::Command* command) {
     sigdelset(&mostSignals, SIGSTOP);
     posix_spawnattr_setsigdefault(&attributes, &mostSignals);
 #else
-      sigset_t allSignals;
-      sigfillset(&allSignals);
-      posix_spawnattr_setsigdefault(&attributes, &allSignals);
+      sigset_t mostSignals;
+      sigfillset(&mostSignals);
+      sigdelset(&mostSignals, SIGKILL);
+      sigdelset(&mostSignals, SIGSTOP);
+      posix_spawnattr_setsigdefault(&attributes, &mostSignals);
 #endif
 
       // Establish a separate process group.
@@ -1203,24 +1223,19 @@ buildCommand(BuildContext& context, ninja::Command* command) {
       posix_spawn_file_actions_t fileActions;
       posix_spawn_file_actions_init(&fileActions);
 
+      // Open /dev/null as stdin.
+      posix_spawn_file_actions_addopen(
+        &fileActions, 0, "/dev/null", O_RDONLY, 0);
+
       // Create a pipe to use to read the command output, if necessary.
       int pipe[2]{ -1, -1 };
       if (!isConsole) {
-        if (::pipe(pipe) < 0) {
+        if (basic::sys::pipe(pipe) < 0) {
           context.emitError("unable to create command pipe (%s)",
                             strerror(errno));
           return false;
         }
-      }
 
-      // Open /dev/null as stdin.
-      posix_spawn_file_actions_addopen(
-          &fileActions, 0, "/dev/null", O_RDONLY, 0);
-
-      if (isConsole) {
-        posix_spawn_file_actions_adddup2(&fileActions, 1, 1);
-        posix_spawn_file_actions_adddup2(&fileActions, 2, 2);
-      } else {
         // Open the write end of the pipe as stdout and stderr.
         posix_spawn_file_actions_adddup2(&fileActions, pipe[1], 1);
         posix_spawn_file_actions_adddup2(&fileActions, pipe[1], 2);
@@ -1228,6 +1243,10 @@ buildCommand(BuildContext& context, ninja::Command* command) {
         // Close the read and write ends of the pipe.
         posix_spawn_file_actions_addclose(&fileActions, pipe[0]);
         posix_spawn_file_actions_addclose(&fileActions, pipe[1]);
+      } else {
+        // Otherwise, propagate the current stdout/stderr.
+        posix_spawn_file_actions_adddup2(&fileActions, 1, 1);
+        posix_spawn_file_actions_adddup2(&fileActions, 2, 2);
       }
 
       // Spawn the command.
@@ -1237,15 +1256,16 @@ buildCommand(BuildContext& context, ninja::Command* command) {
       args[2] = command->getCommandString().c_str();
       args[3] = nullptr;
 
-      // We need to hold the spawn processes lock when we spawn, to ensure that
-      // we don't create a process in between when we are cancelled.
+      // Spawn the command.
       pid_t pid;
       {
+        // We need to hold the spawn processes lock when we spawn, to ensure that
+        // we don't create a process in between when we are cancelled.
         std::lock_guard<std::mutex> guard(context.spawnedProcessesMutex);
 
         if (posix_spawn(&pid, args[0], /*file_actions=*/&fileActions,
                         /*attrp=*/&attributes, const_cast<char**>(args),
-                        ::environ) != 0) {
+                        environ) != 0) {
           context.emitError("unable to spawn process (%s)", strerror(errno));
           return false;
         }
@@ -1259,7 +1279,7 @@ buildCommand(BuildContext& context, ninja::Command* command) {
       posix_spawnattr_destroy(&attributes);
 
       // Read the command output, if buffering.
-      std::vector<char> outputData;
+      SmallString<1024> outputData;
       if (!isConsole) {
         // Close the write end of the output pipe.
         ::close(pipe[1]);
@@ -1287,15 +1307,16 @@ buildCommand(BuildContext& context, ninja::Command* command) {
       // Wait for the command to complete.
       int status, result = waitpid(pid, &status, 0);
       while (result == -1 && errno == EINTR)
-          result = waitpid(pid, &status, 0);
-      if (result == -1) {
-        context.emitError("unable to wait for process (%s)", strerror(errno));
-      }
+        result = waitpid(pid, &status, 0);
 
       // Update the set of spawned processes.
       {
         std::lock_guard<std::mutex> guard(context.spawnedProcessesMutex);
         context.spawnedProcesses.erase(pid);
+      }
+
+      if (result == -1) {
+        context.emitError("unable to wait for process (%s)", strerror(errno));
       }
 
       // If the build has been interrupted, return without writing any output or
@@ -1310,7 +1331,8 @@ buildCommand(BuildContext& context, ninja::Command* command) {
       if (status != 0) {
         // If the process was killed by SIGINT, assume it is because we were
         // interrupted.
-        if (WIFSIGNALED(status) && WTERMSIG(status) == SIGINT)
+        bool cancelled = WIFSIGNALED(status) && (WTERMSIG(status) == SIGINT || WTERMSIG(status) == SIGKILL);
+        if (cancelled)
           return false;
 
         // Otherwise, report the failure.
@@ -1685,6 +1707,14 @@ void NinjaBuildEngineDelegate::cycleDetected(
   context->isCancelled = true;
 }
 
+void NinjaBuildEngineDelegate::error(const Twine& message) {
+  // Report the error.
+  context->emitError("error: " + message.str());
+
+  // Cancel the build.
+  context->isCancelled = true;
+}
+
 }
 
 int commands::executeNinjaBuildCommand(std::vector<std::string> args) {
@@ -1702,7 +1732,7 @@ int commands::executeNinjaBuildCommand(std::vector<std::string> args) {
   bool verbose = false;
   unsigned numJobsInParallel = 0;
   unsigned numFailedCommandsToTolerate = 1;
-  float maximumLoadAverage = 0.0;
+  double maximumLoadAverage = 0.0;
   std::vector<std::string> debugTools;
 
   while (!args.empty() && args[0][0] == '-') {
@@ -1864,7 +1894,7 @@ int commands::executeNinjaBuildCommand(std::vector<std::string> args) {
 
   // Honor the --chdir option, if used.
   if (!chdirPath.empty()) {
-    if (::chdir(chdirPath.c_str()) < 0) {
+    if (!sys::chdir(chdirPath.c_str())) {
       fprintf(stderr, "%s: error: unable to honor --chdir: %s\n",
               getProgramName(), strerror(errno));
       return 1;
@@ -1927,8 +1957,8 @@ int commands::executeNinjaBuildCommand(std::vector<std::string> args) {
     // FIXME: Do a serious analysis of scheduling, including ideally an active
     // scheduler in the execution queue.
     if (numJobsInParallel == 0) {
-      long numCPUs = sysconf(_SC_NPROCESSORS_ONLN);
-      if (numCPUs < 0) {
+      unsigned numCPUs = std::thread::hardware_concurrency();
+      if (numCPUs == 0) {
         context.emitError("unable to detect number of CPUs (%s)",
                           strerror(errno));
         return 1;
@@ -1985,11 +2015,10 @@ int commands::executeNinjaBuildCommand(std::vector<std::string> args) {
         core::createSQLiteBuildDB(dbFilename,
                                   BuildValue::currentSchemaVersion,
                                   &error));
-      if (!db) {
+      if (!db || !context.engine.attachDB(std::move(db), &error)) {
         context.emitError("unable to open build database: %s", error.c_str());
         return 1;
       }
-      context.engine.attachDB(std::move(db));
     }
 
     // Enable tracing, if requested.
@@ -2183,7 +2212,7 @@ int commands::executeNinjaBuildCommand(std::vector<std::string> args) {
       sigaction(SIGINT, &action, 0);
 
       kill(getpid(), SIGINT);
-      usleep(1000);
+      std::this_thread::sleep_for(std::chrono::microseconds(1000));
       return 2;
     }
 

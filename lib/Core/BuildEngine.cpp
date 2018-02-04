@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -15,6 +15,7 @@
 #include "llbuild/Core/BuildDB.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 
 #include "BuildEngineTrace.h"
 
@@ -54,6 +55,12 @@ class BuildEngineImpl {
 
   BuildEngineDelegate& delegate;
 
+  /// The key table, used when there is no database.
+  llvm::StringMap<bool> keyTable;
+
+  /// The mutex that protects the key table.
+  std::mutex keyTableMutex;
+  
   /// The build database, if attached.
   std::unique_ptr<BuildDB> db;
 
@@ -127,9 +134,14 @@ class BuildEngineImpl {
       Complete
     };
 
-    RuleInfo(Rule&& rule) : rule(rule) {}
+    RuleInfo(KeyID keyID, Rule&& rule) : keyID(keyID), rule(rule) {}
 
+    /// The ID for the rule key.
+    KeyID keyID;
+
+    /// The rule this information describes.
     Rule rule;
+    
     /// The state dependent record for in-progress information.
     union {
       RuleScanRecord* pendingScanRecord;
@@ -187,11 +199,19 @@ class BuildEngineImpl {
       assert(isScanning());
       return inProgressInfo.pendingScanRecord;
     }
+    const RuleScanRecord* getPendingScanRecord() const {
+      assert(isScanning());
+      return inProgressInfo.pendingScanRecord;
+    }
     void setPendingScanRecord(RuleScanRecord* value) {
       inProgressInfo.pendingScanRecord = value;
     }
 
     TaskInfo* getPendingTaskInfo() {
+      assert(isInProgress());
+      return inProgressInfo.pendingTaskInfo;
+    }
+    const TaskInfo* getPendingTaskInfo() const {
       assert(isInProgress());
       return inProgressInfo.pendingTaskInfo;
     }
@@ -206,8 +226,9 @@ class BuildEngineImpl {
   // NOTE: We currently rely on the unordered_map behavior that ensures that
   // references to elements are not invalidated by insertion. We will need to
   // move to an alternate allocation strategy if we switch to DenseMap style
-  // table.
-  std::unordered_map<KeyType, RuleInfo> ruleInfos;
+  // table. This is probably a good idea in any case, because we would benefit
+  // from pool allocating RuleInfo instances.
+  std::unordered_map<KeyID, RuleInfo> ruleInfos;
 
   /// Information tracked for executing tasks.
   //
@@ -236,7 +257,7 @@ class BuildEngineImpl {
     /// provided.
     unsigned waitCount = 0;
     /// The list of discovered dependencies found during execution of the task.
-    std::vector<KeyType> discoveredDependencies;
+    std::vector<KeyID> discoveredDependencies;
 
 #ifndef NDEBUG
     void dump() const {
@@ -374,6 +395,10 @@ private:
     }
 
     // If the rule indicates its computed value is out of date, it needs to run.
+    //
+    // FIXME: We should probably try and move this so that it can be done by
+    // clients in the background, either by us backgrounding it, or by using a
+    // completion model as we do for inputs.
     if (ruleInfo.rule.isResultValid &&
         !ruleInfo.rule.isResultValid(buildEngine, ruleInfo.rule,
                                      ruleInfo.result.value)) {
@@ -491,8 +516,8 @@ private:
     do {
       // Look up the input rule info, if not yet cached.
       if (!request.inputRuleInfo) {
-        const auto& inputKey = ruleInfo.result.dependencies[request.inputIndex];
-        request.inputRuleInfo = &getRuleInfoForKey(inputKey);
+        const auto& inputID = ruleInfo.result.dependencies[request.inputIndex];
+        request.inputRuleInfo = &getRuleInfoForKey(inputID);
       }
       auto& inputRuleInfo = *request.inputRuleInfo;
 
@@ -587,8 +612,15 @@ private:
   }
 
   /// Execute all of the work pending in the engine queues until they are empty.
-  void executeTasks() {
+  ///
+  /// \param buildKey The key to build.
+  /// \returns True on success, false if the build could not be completed; the
+  /// latter only occurs when the build contains a cycle currently.
+  bool executeTasks(const KeyType& buildKey) {
     std::vector<TaskInputRequest> finishedInputRequests;
+
+    // Push a dummy input request for the rule to build.
+    inputRequests.push_back({ nullptr, &getRuleInfoForKey(buildKey) });
 
     // Process requests as long as we have work to do.
     while (true) {
@@ -697,7 +729,7 @@ private:
         // * Record at the time it is popped off the input request queue.
         // * Record at the time the input is supplied (here).
         request.taskInfo->forRuleInfo->result.dependencies.push_back(
-          request.inputRuleInfo->rule.key);
+            request.inputRuleInfo->keyID);
 
         // Provide the requesting task with the input.
         //
@@ -781,7 +813,7 @@ private:
         // they are not keys for rules which have not been run, which would
         // indicate an underspecified build (e.g., a generated header).
         ruleInfo->result.dependencies.insert(
-          ruleInfo->result.dependencies.begin(),
+          ruleInfo->result.dependencies.end(),
           taskInfo->discoveredDependencies.begin(),
           taskInfo->discoveredDependencies.end());
 
@@ -792,13 +824,21 @@ private:
         // approach for discovered dependencies instead of just providing
         // support for taskNeedsInput() even after the task has started
         // computing and from parallel contexts.
-        for (const auto& inputKey: taskInfo->discoveredDependencies) {
-          inputRequests.push_back({ nullptr, &getRuleInfoForKey(inputKey) });
+        for (KeyID inputID: taskInfo->discoveredDependencies) {
+          inputRequests.push_back({ nullptr, &getRuleInfoForKey(inputID) });
         }
 
         // Update the database record, if attached.
-        if (db)
-            db->setRuleResult(ruleInfo->rule, ruleInfo->result);
+        if (db) {
+          std::string error;
+          bool result = db->setRuleResult(
+              ruleInfo->keyID, ruleInfo->rule, ruleInfo->result, &error);
+          if (!result) {
+            delegate.error(error);
+            completeRemainingTasks();
+            return false;
+          }
+        }
 
         // Wake up all of the pending scan requests.
         for (const auto& request: taskInfo->deferredScanRequests) {
@@ -852,14 +892,26 @@ private:
     // If there was no work to do, but we still have running tasks, then
     // we have found a cycle and are deadlocked.
     if (!taskInfos.empty()) {
-      reportCycle();
+      reportCycle(buildKey);
+      return false;
     }
+
+    return true;
   }
 
-  void reportCycle() {
+  /// Report the cycle which has called the engine to be unable to make forward
+  /// progress.
+  ///
+  /// \param buildKey The key which was requested to build (the reported cycle
+  /// with start with this node).
+  void reportCycle(const KeyType& buildKey) {
+    // Take all available locks, to ensure we dump a consistent state.
+    std::lock_guard<std::mutex> guard1(taskInfosMutex);
+    std::lock_guard<std::mutex> guard2(finishedTaskInfosMutex);
+
     // Gather all of the successor relationships.
-    std::unordered_map<Rule*, std::vector<Rule*>> graph;
-    std::vector<RuleScanRecord *> activeRuleScanRecords;
+    std::unordered_map<Rule*, std::vector<Rule*>> successorGraph;
+    std::vector<const RuleScanRecord *> activeRuleScanRecords;
     for (const auto& it: taskInfos) {
       const TaskInfo& taskInfo = it.second;
       assert(taskInfo.forRuleInfo);
@@ -871,13 +923,21 @@ private:
       for (const auto& request: taskInfo.deferredScanRequests) {
         // Add the sucessor for the deferred relationship itself.
         successors.push_back(&request.ruleInfo->rule);
-          
-        // Add the active rule scan record which needs to be traversed.
-        assert(request.ruleInfo->isScanning());
-        activeRuleScanRecords.push_back(
-            request.ruleInfo->getPendingScanRecord());
       }
-      graph.insert({ &taskInfo.forRuleInfo->rule, successors });
+      successorGraph.insert({ &taskInfo.forRuleInfo->rule, successors });
+    }
+
+    // Add the pending scan records for every rule.
+    //
+    // NOTE: There is a very subtle condition around this versus adding the ones
+    // accessible via the tasks, see https://bugs.swift.org/browse/SR-1948.
+    // Unfortunately, we do not have a test case for this!
+    for (const auto& it: ruleInfos) {
+      const RuleInfo& ruleInfo = it.second;
+      if (ruleInfo.isScanning()) {
+        const auto* scanRecord = ruleInfo.getPendingScanRecord();
+        activeRuleScanRecords.push_back(scanRecord);
+      }
     }
       
     // Gather dependencies from all of the active scan records.
@@ -892,14 +952,17 @@ private:
           
       // For each paused request, add the dependency.
       for (const auto& request: record->pausedInputRequests) {
-        graph[&request.inputRuleInfo->rule].push_back(
-            &request.taskInfo->forRuleInfo->rule);
+        if (request.taskInfo) {
+          successorGraph[&request.inputRuleInfo->rule].push_back(
+              &request.taskInfo->forRuleInfo->rule);
+        }
       }
           
       // Process the deferred scan requests.
       for (const auto& request: record->deferredScanRequests) {
         // Add the sucessor for the deferred relationship itself.
-        graph[&request.inputRuleInfo->rule].push_back(&request.ruleInfo->rule);
+        successorGraph[&request.inputRuleInfo->rule].push_back(
+            &request.ruleInfo->rule);
               
         // Add the active rule scan record which needs to be traversed.
         assert(request.ruleInfo->isScanning());
@@ -907,54 +970,74 @@ private:
             request.ruleInfo->getPendingScanRecord());
       }
     }
-    // Find the cycle, which should be reachable from any remaining node.
-    //
-    // FIXME: Need a setvector.
+
+    // Invert the graph, so we can search from the root.
+    std::unordered_map<Rule*, std::vector<Rule*>> predecessorGraph;
+    for (auto& entry: successorGraph) {
+      Rule* node = entry.first;
+      for (auto& succ: entry.second) {
+        predecessorGraph[succ].push_back(node);
+      }
+    }
+
+    // Normalize predecessor order, to ensure a deterministic result (at least,
+    // if the graph reaches the same cycle).
+    for (auto& entry: predecessorGraph) {
+      std::sort(entry.second.begin(), entry.second.end(), [](Rule* a, Rule* b) {
+          return a->key < b->key;
+        });
+    }
+    
+    // Find the cycle by searching from the entry node.
+    struct WorkItem {
+      WorkItem(Rule * node) { this->node = node; }
+
+      Rule* node;
+      unsigned predecessorIndex = 0;
+    };
     std::vector<Rule*> cycleList;
     std::unordered_set<Rule*> cycleItems;
-    std::function<bool(Rule*)> findCycle;
-    findCycle = [&](Rule* node) {
-      // Push the node on the stack.
-      cycleList.push_back(node);
-      auto it = cycleItems.insert(node);
+    std::vector<WorkItem> stack{
+      WorkItem{ &getRuleInfoForKey(buildKey).rule } };
+    while (!stack.empty()) {
+      // Take the top item.
+      auto& entry = stack.back();
+      const auto& predecessors = predecessorGraph[entry.node];
+      
+      // If the index is 0, we just started visiting the node.
+      if (entry.predecessorIndex == 0) {
+        // Push the node on the stack.
+        cycleList.push_back(entry.node);
+        auto it = cycleItems.insert(entry.node);
 
-      // If the node is already in the stack, we found the cycle.
-      if (!it.second)
-        return true;
-
-      // Otherwise, iterate over each successor looking for a cycle.
-      for (Rule* successor: graph[node]) {
-        if (findCycle(successor))
-          return true;
+        // If the node is already in the stack, we found a cycle.
+        if (!it.second)
+          break;
       }
 
-      // If we didn't find the cycle, pop this item.
-      cycleItems.erase(it.first);
-      cycleList.pop_back();
-      return false;
-    };
+      // Visit the next predecessor, if possible.
+      if (entry.predecessorIndex != predecessors.size()) {
+        auto* child = predecessors[entry.predecessorIndex];
+        entry.predecessorIndex += 1;
+        stack.emplace_back(WorkItem{ child });
+        continue;
+      }
 
-    // Iterate through the graph keys in a deterministic order.
-    std::vector<Rule*> orderedKeys;
-    for (auto& entry: graph)
-      orderedKeys.push_back(entry.first);
-    std::sort(orderedKeys.begin(), orderedKeys.end(), [] (Rule* a, Rule* b) {
-        return a->key < b->key;
-      });
-    for (const auto& key: orderedKeys) {
-      if (findCycle(key))
-        break;
+      // Otherwise, we are done visiting this node.
+      cycleItems.erase(entry.node);
+      cycleList.pop_back();
+      stack.pop_back();
     }
     assert(!cycleList.empty());
 
-    // Reverse the cycle list, since it was formed from the successor graph.
-    std::reverse(cycleList.begin(), cycleList.end());
-
     delegate.cycleDetected(cycleList);
+    completeRemainingTasks();
+  }
 
-    // Complete all of the remaining tasks.
-    //
-    // FIXME: Should we have a task abort callback?
+  // Complete all of the remaining tasks.
+  //
+  // FIXME: Should we have a task abort callback?
+  void completeRemainingTasks() {
     for (auto& it: taskInfos) {
       // Complete the task, even though it did not update the value.
       //
@@ -987,14 +1070,54 @@ public:
     return &delegate;
   }
 
+  Timestamp getCurrentTimestamp() {
+    return currentTimestamp;
+  }
+
+  KeyID getKeyID(const KeyType& key) {
+    // Delegate if we have a database.
+    if (db) {
+      return db->getKeyID(key);
+    }
+
+    // Otherwise use our builtin key table.
+    {
+      std::lock_guard<std::mutex> guard(keyTableMutex);
+      auto it = keyTable.insert(std::make_pair(key, false)).first;
+      return (KeyID)(uintptr_t)it->getKey().data();
+    }
+  }
+
   RuleInfo& getRuleInfoForKey(const KeyType& key) {
+    auto keyID = getKeyID(key);
+    
     // Check if we have already found the rule.
-    auto it = ruleInfos.find(key);
+    auto it = ruleInfos.find(keyID);
     if (it != ruleInfos.end())
       return it->second;
 
     // Otherwise, request it from the delegate and add it.
-    return addRule(delegate.lookupRule(key));
+    return addRule(keyID, delegate.lookupRule(key));
+  }
+
+  RuleInfo& getRuleInfoForKey(KeyID keyID) {
+    // Check if we have already found the rule.
+    auto it = ruleInfos.find(keyID);
+    if (it != ruleInfos.end())
+      return it->second;
+
+    // Otherwise, we need to resolve the full key so we can request it from the
+    // delegate.
+    KeyType key;
+    if (db) {
+      key = db->getKeyForID(keyID);
+    } else {
+      // Note that we don't need to lock `keyTable` here because the key entries
+      // themselves don't change once created.
+      key = llvm::StringMapEntry<bool>::GetStringMapEntryFromKeyData(
+          (const char*)(uintptr_t)keyID).getKey();
+    }
+    return addRule(keyID, delegate.lookupRule(key));
   }
 
   TaskInfo* getTaskInfo(Task* task) {
@@ -1007,7 +1130,11 @@ public:
   /// @{
 
   RuleInfo& addRule(Rule&& rule) {
-    auto result = ruleInfos.emplace(rule.key, RuleInfo(std::move(rule)));
+    return addRule(getKeyID(rule.key), std::move(rule));
+  }
+  
+  RuleInfo& addRule(KeyID keyID, Rule&& rule) {
+    auto result = ruleInfos.emplace(keyID, RuleInfo(keyID, std::move(rule)));
     if (!result.second) {
       // FIXME: Error handling.
       std::cerr << "error: attempt to register duplicate rule \""
@@ -1022,7 +1149,12 @@ public:
     // it and never duplicate it.
     RuleInfo& ruleInfo = result.first->second;
     if (db) {
-      db->lookupRuleResult(ruleInfo.rule, &ruleInfo.result);
+      std::string error;
+      db->lookupRuleResult(ruleInfo.keyID, ruleInfo.rule, &ruleInfo.result, &error);
+      if (!error.empty()) {
+        delegate.error(error);
+        completeRemainingTasks();
+      }
     }
 
     return ruleInfo;
@@ -1034,8 +1166,15 @@ public:
   /// @{
 
   const ValueType& build(const KeyType& key) {
-    if (db)
-      db->buildStarted();
+    if (db) {
+      std::string error;
+      bool result = db->buildStarted(&error);
+      if (!result) {
+        delegate.error(error);
+        static ValueType emptyValue{};
+        return emptyValue;
+      }
+    }
 
     // Increment our running iteration count.
     //
@@ -1047,23 +1186,23 @@ public:
     // and \see RuleInfo::isComplete().
     ++currentTimestamp;
 
-    // Find the rule.
-    auto& ruleInfo = getRuleInfoForKey(key);
-
     if (trace)
       trace->buildStarted();
 
-    // Push a dummy input request for this rule.
-    inputRequests.push_back({ nullptr, &ruleInfo });
-
     // Run the build engine, to process any necessary tasks.
-    executeTasks();
-
+    bool success = executeTasks(key);
+    
     // Update the build database, if attached.
     //
     // FIXME: Is it correct to do this here, or earlier?
     if (db) {
-      db->setCurrentIteration(currentTimestamp);
+      std::string error;
+      bool result = db->setCurrentIteration(currentTimestamp, &error);
+      if (!result) {
+        delegate.error(error);
+        static ValueType emptyValue{};
+        return emptyValue;
+      }
       db->buildComplete();
     }
 
@@ -1079,19 +1218,28 @@ public:
     freeRuleScanRecords.clear();
     ruleScanRecordBlocks.clear();
 
+    // If the build failed, return the empty result.
+    if (!success) {
+      static ValueType emptyValue{};
+      return emptyValue;
+    }
+
     // The task queue should be empty and the rule complete.
+    auto& ruleInfo = getRuleInfoForKey(key);
     assert(taskInfos.empty() && ruleInfo.isComplete(this));
     return ruleInfo.result.value;
   }
 
-  void attachDB(std::unique_ptr<BuildDB> database) {
+  bool attachDB(std::unique_ptr<BuildDB> database, std::string* error_out) {
     assert(!db && "invalid attachDB() call");
     assert(currentTimestamp == 0 && "invalid attachDB() call");
     assert(ruleInfos.empty() && "invalid attachDB() call");
     db = std::move(database);
 
     // Load our initial state from the database.
-    currentTimestamp = db->getCurrentIteration();
+    bool success;
+    currentTimestamp = db->getCurrentIteration(&success, error_out);
+    return success;
   }
 
   bool enableTracing(const std::string& filename, std::string* error_out) {
@@ -1108,10 +1256,8 @@ public:
   void dumpGraphToFile(const std::string& path) {
     FILE* fp = ::fopen(path.c_str(), "w");
     if (!fp) {
-      // FIXME: Error handling.
-      std::cerr << "error: unable to open graph output path \""
-                << path << "\"\n";
-      exit(1);
+      delegate.error("error: unable to open graph output path \"" + path + "\"");
+      return;
     }
 
     // Write the graph header.
@@ -1133,9 +1279,10 @@ public:
     // Write out all of the rules.
     for (const auto& ruleInfo: orderedRuleInfos) {
       fprintf(fp, "\"%s\"\n", ruleInfo->rule.key.c_str());
-      for (auto& input: ruleInfo->result.dependencies) {
+      for (KeyID inputID: ruleInfo->result.dependencies) {
+        const auto& dependency = getRuleInfoForKey(inputID);
         fprintf(fp, "\"%s\" -> \"%s\"\n", ruleInfo->rule.key.c_str(),
-                input.c_str());
+                dependency.rule.key.c_str());
       }
       fprintf(fp, "\n");
     }
@@ -1179,9 +1326,9 @@ public:
   void taskNeedsInput(Task* task, const KeyType& key, uintptr_t inputID) {
     // Validate the InputID.
     if (inputID > BuildEngine::kMaximumInputID) {
-      // FIXME: Error handling.
-      std::cerr << "error: attempt to use reserved input ID\n";
-      exit(1);
+      delegate.error("error: attempt to use reserved input ID");
+      completeRemainingTasks();
+      return;
     }
 
     addTaskInputRequest(task, key, inputID);
@@ -1197,12 +1344,13 @@ public:
     assert(taskInfo && "cannot request inputs for an unknown task");
 
     if (!taskInfo->forRuleInfo->isInProgressComputing()) {
-      // FIXME: Error handling.
-      std::cerr << "error: invalid state for adding discovered dependency\n";
-      exit(1);
+      delegate.error("error: invalid state for adding discovered dependency");
+      completeRemainingTasks();
+      return;
     }
 
-    taskInfo->discoveredDependencies.push_back(key);
+    auto dependencyID = getKeyID(key);
+    taskInfo->discoveredDependencies.push_back(dependencyID);
   }
 
   void taskIsComplete(Task* task, ValueType&& value, bool forceChange) {
@@ -1213,9 +1361,9 @@ public:
     assert(taskInfo && "cannot request inputs for an unknown task");
 
     if (!taskInfo->forRuleInfo->isInProgressComputing()) {
-      // FIXME: Error handling.
-      std::cerr << "error: invalid state for marking task complete\n";
-      exit(1);
+      delegate.error("error: invalid state for marking task complete");
+      completeRemainingTasks();
+      return;
     }
 
     RuleInfo* ruleInfo = taskInfo->forRuleInfo;
@@ -1267,6 +1415,10 @@ BuildEngineDelegate* BuildEngine::getDelegate() {
   return static_cast<BuildEngineImpl*>(impl)->getDelegate();
 }
 
+Timestamp BuildEngine::getCurrentTimestamp() {
+  return static_cast<BuildEngineImpl*>(impl)->getCurrentTimestamp();
+}
+
 void BuildEngine::addRule(Rule&& rule) {
   static_cast<BuildEngineImpl*>(impl)->addRule(std::move(rule));
 }
@@ -1279,8 +1431,8 @@ void BuildEngine::dumpGraphToFile(const std::string& path) {
   static_cast<BuildEngineImpl*>(impl)->dumpGraphToFile(path);
 }
 
-void BuildEngine::attachDB(std::unique_ptr<BuildDB> database) {
-  static_cast<BuildEngineImpl*>(impl)->attachDB(std::move(database));
+bool BuildEngine::attachDB(std::unique_ptr<BuildDB> database, std::string* error_out) {
+  return static_cast<BuildEngineImpl*>(impl)->attachDB(std::move(database), error_out);
 }
 
 bool BuildEngine::enableTracing(const std::string& path,

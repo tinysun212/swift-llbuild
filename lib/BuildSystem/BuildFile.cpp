@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -14,6 +14,7 @@
 
 #include "llbuild/Basic/FileSystem.h"
 #include "llbuild/Basic/LLVM.h"
+#include "llbuild/BuildSystem/BuildDescription.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -29,23 +30,13 @@ void ConfigureContext::error(const Twine& message) const {
 
 BuildFileDelegate::~BuildFileDelegate() {}
 
-Node::~Node() {}
-
-Command::~Command() {}
-
-Tool::~Tool() {}
-
-std::unique_ptr<Command> Tool::createCustomCommand(const BuildKey& key) {
-  return nullptr;
-}
-
 #pragma mark - BuildFile implementation
 
 namespace {
 
 #ifndef NDEBUG
 static void dumpNode(llvm::yaml::Node* node, unsigned indent=0)
-    __attribute__((used));
+    LLVM_ATTRIBUTE_USED;
 static void dumpNode(llvm::yaml::Node* node, unsigned indent) {
   switch (node->getType()) {
   default: {
@@ -109,19 +100,19 @@ class BuildFileImpl {
   BuildFileDelegate& delegate;
 
   /// The set of all registered tools.
-  BuildFile::tool_set tools;
+  BuildDescription::tool_set tools;
 
   /// The set of all declared targets.
-  BuildFile::target_set targets;
+  BuildDescription::target_set targets;
 
   /// Default target name
   std::string defaultTarget;
 
   /// The set of all declared nodes.
-  BuildFile::node_set nodes;
+  BuildDescription::node_set nodes;
 
   /// The set of all declared commands.
-  BuildFile::command_set commands;
+  BuildDescription::command_set commands;
   
   /// The number of parsing errors.
   int numErrors = 0;
@@ -631,6 +622,12 @@ class BuildFileImpl {
           static_cast<llvm::yaml::ScalarNode*>(entry.getKey()));
       llvm::yaml::MappingNode* attrs = static_cast<llvm::yaml::MappingNode*>(
           entry.getValue());
+
+      // Check that the command is not a duplicate.
+      if (commands.count(name) != 0) {
+        error(entry.getKey(), "duplicate command in 'commands' map");
+        continue;
+      }
       
       // Get the initial attribute, which must be the tool name.
       auto it = attrs->begin();
@@ -832,7 +829,7 @@ public:
   /// @name Parse Actions
   /// @{
 
-  bool load() {
+  std::unique_ptr<BuildDescription> load() {
     // Create a memory buffer for the input.
     //
     // FIXME: Lift the file access into the delegate, like we do for Ninja.
@@ -840,7 +837,7 @@ public:
     auto input = delegate.getFileSystem().getFileContents(mainFilename);
     if (!input) {
       error("unable to open '" + mainFilename + "'");
-      return false;
+      return nullptr;
     }
 
     delegate.setFileContentsBeingParsed(input->getBuffer());
@@ -852,36 +849,37 @@ public:
     auto it = stream.begin();
     if (it == stream.end()) {
       error("missing document in stream");
-      return false;
+      return nullptr;
     }
 
     auto& document = *it;
-    if (!parseRootNode(document.getRoot())) {
-      return false;
+    auto root = document.getRoot();
+    if (!root) {
+      error("missing document in stream");
+      return nullptr;
+    }
+
+    if (!parseRootNode(root)) {
+      return nullptr;
     }
 
     if (++it != stream.end()) {
       error(it->getRoot(), "unexpected additional document in stream");
-      return false;
+      return nullptr;
     }
 
-    return numErrors == 0;
+    // Create the actual description from our constructed elements.
+    //
+    // FIXME: This is historical, We should tidy up this class to reflect that
+    // it is now just a builder.
+    auto description = llvm::make_unique<BuildDescription>();
+    std::swap(description->getNodes(), nodes);
+    std::swap(description->getTargets(), targets);
+    std::swap(description->getDefaultTarget(), defaultTarget);
+    std::swap(description->getCommands(), commands);
+    std::swap(description->getTools(), tools);
+    return description;
   }
-
-  /// @name Accessors
-  /// @{
-
-  const BuildFile::node_set& getNodes() const { return nodes; }
-
-  const BuildFile::target_set& getTargets() const { return targets; }
-
-  const StringRef getDefaultTarget() const { return defaultTarget; }
-
-  const BuildFile::command_set& getCommands() const { return commands; }
-
-  const BuildFile::tool_set& getTools() const { return tools; }
-
-  /// @}
 };
 
 }
@@ -898,30 +896,7 @@ BuildFile::~BuildFile() {
   delete static_cast<BuildFileImpl*>(impl);
 }
 
-BuildFileDelegate* BuildFile::getDelegate() {
-  return static_cast<BuildFileImpl*>(impl)->getDelegate();
-}
-
-const BuildFile::node_set& BuildFile::getNodes() const {
-  return static_cast<BuildFileImpl*>(impl)->getNodes();
-}
-
-const BuildFile::target_set& BuildFile::getTargets() const {
-  return static_cast<BuildFileImpl*>(impl)->getTargets();
-}
-
-const StringRef BuildFile::getDefaultTarget() const {
-  return static_cast<BuildFileImpl*>(impl)->getDefaultTarget();
-}
-
-const BuildFile::command_set& BuildFile::getCommands() const {
-  return static_cast<BuildFileImpl*>(impl)->getCommands();
-}
-
-const BuildFile::tool_set& BuildFile::getTools() const {
-  return static_cast<BuildFileImpl*>(impl)->getTools();
-}
-
-bool BuildFile::load() {
+std::unique_ptr<BuildDescription> BuildFile::load() {
+  // Create the build description.
   return static_cast<BuildFileImpl*>(impl)->load();
 }

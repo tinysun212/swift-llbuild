@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -15,7 +15,9 @@
 
 #include "llbuild/Basic/Compiler.h"
 #include "llbuild/Basic/LLVM.h"
+#include "llbuild/BuildSystem/CommandResult.h"
 
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
@@ -31,9 +33,14 @@ class FileSystem;
 
 namespace buildsystem {
 
+class BuildDescription;
 class BuildExecutionQueue;
+class BuildKey;
+class BuildValue;
 class Command;
 class Tool;
+
+bool pathIsPrefixedByPath(std::string path, std::string prefixPath);
   
 class BuildSystemDelegate {
   // DO NOT COPY
@@ -120,11 +127,6 @@ public:
 
   /// Called by the build system to get create the object used to dispatch work.
   virtual std::unique_ptr<BuildExecutionQueue> createExecutionQueue() = 0;
-
-  /// Called by the build system to determine if the build has been cancelled.
-  ///
-  /// This is checked before starting each new command.
-  virtual bool isCancelled() = 0;
   
   /// Called by the build system to report a command failure.
   virtual void hadCommandFailure() = 0;
@@ -151,6 +153,21 @@ public:
   /// commands).
   virtual void commandPreparing(Command*) = 0;
 
+  /// Called by the build system to allow the delegate to skip a command without
+  /// implicitly skipping its dependents.
+  ///
+  /// WARNING: Clients need to take special care when using this. Skipping
+  /// commands without considering their dependencies or dependents can easily
+  /// produce an inconsistent build.
+  ///
+  /// This method is called before the command starts, when the system has
+  /// identified that it will eventually need to run (after all of its inputs
+  /// have been satisfied).
+  ///
+  /// The system guarantees that all such calls will be paired with a
+  /// corresponding \see commandFinished() call.
+  virtual bool shouldCommandStart(Command*) = 0;
+
   /// Called by the build system to report that a declared command has started.
   ///
   /// The system guarantees that all such calls will be paired with a
@@ -161,8 +178,25 @@ public:
   /// commands).
   virtual void commandStarted(Command*) = 0;
 
+  /// Called to report an error during the execution of a command.
+  ///
+  /// \param data - The error message.
+  virtual void commandHadError(Command*, StringRef data) = 0;
+
+  /// Called to report a note during the execution of a command.
+  ///
+  /// \param data - The note message.
+  virtual void commandHadNote(Command*, StringRef data) = 0;
+
+  /// Called to report a warning during the execution of a command.
+  ///
+  /// \param data - The warning message.
+  virtual void commandHadWarning(Command*, StringRef data) = 0;
+
   /// Called by the build system to report a command has completed.
-  virtual void commandFinished(Command*) = 0;
+  ///
+  /// \param result - The result of command (e.g. success, failure, etc).
+  virtual void commandFinished(Command*, CommandResult result) = 0;
 };
 
 /// The BuildSystem class is used to perform builds using the native build
@@ -171,12 +205,13 @@ class BuildSystem {
 private:
   void *impl;
 
+  // Copying is disabled.
+  BuildSystem(const BuildSystem&) LLBUILD_DELETED_FUNCTION;
+  void operator=(const BuildSystem&) LLBUILD_DELETED_FUNCTION;
+
 public:
   /// Create a build system with the given delegate.
-  ///
-  /// \arg mainFilename The path of the main build file.
-  explicit BuildSystem(BuildSystemDelegate& delegate,
-                       StringRef mainFilename);
+  explicit BuildSystem(BuildSystemDelegate& delegate);
   ~BuildSystem();
 
   /// Return the delegate the engine was configured with.
@@ -185,6 +220,14 @@ public:
   /// @name Client API
   /// @{
 
+  /// Load the build description from a file.
+  ///
+  /// \returns True on success.
+  bool loadDescription(StringRef mainFilename);
+
+  /// Load an explicit build description. from a file.
+  void loadDescription(std::unique_ptr<BuildDescription> description);
+  
   /// Attach (or create) the database at the given path.
   ///
   /// \returns True on success.
@@ -197,8 +240,24 @@ public:
 
   /// Build the named target.
   ///
-  /// \returns True on success.
+  /// A build description *must* have been loaded before calling this method.
+  ///
+  /// \returns True on success, or false if the build was aborted (for example,
+  /// if a cycle was discovered).
   bool build(StringRef target);
+
+  /// Build a specific key directly.
+  ///
+  /// A build description *must* have been loaded before calling this method.
+  ///
+  /// \returns The result of computing the value, or nil if the build failed.
+  llvm::Optional<BuildValue> build(BuildKey target);
+
+  /// Reset mutable build state before a new build operation.
+  void resetForBuild();
+
+  /// Cancel the current build.
+  void cancel();
 
   /// @}
 };

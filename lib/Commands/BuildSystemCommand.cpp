@@ -14,18 +14,26 @@
 
 #include "llbuild/Basic/FileSystem.h"
 #include "llbuild/Basic/LLVM.h"
+#include "llbuild/Basic/PlatformUtility.h"
+#include "llbuild/BuildSystem/BuildDescription.h"
 #include "llbuild/BuildSystem/BuildFile.h"
 #include "llbuild/BuildSystem/BuildSystem.h"
 #include "llbuild/BuildSystem/BuildSystemFrontend.h"
 #include "llbuild/BuildSystem/BuildValue.h"
 
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "CommandUtil.h"
 
 #include <cerrno>
+#include <thread>
+
+#include <signal.h>
+#include <unistd.h>
 
 using namespace llbuild;
 using namespace llbuild::commands;
@@ -40,6 +48,7 @@ class ParseBuildFileDelegate : public BuildFileDelegate {
   bool showOutput;
   StringRef bufferBeingParsed;
   std::unique_ptr<basic::FileSystem> fileSystem;
+  llvm::StringMap<bool> internedStrings;
   
 public:
   ParseBuildFileDelegate(bool showOutput)
@@ -49,6 +58,11 @@ public:
 
   virtual bool shouldShowOutput() { return showOutput; }
 
+  virtual StringRef getInternedString(StringRef value) override {
+    auto entry = internedStrings.insert(std::make_pair(value, true));
+    return entry.first->getKey();
+  }
+  
   virtual basic::FileSystem& getFileSystem() override { return *fileSystem; }
   
   virtual void setFileContentsBeingParsed(StringRef buffer) override;
@@ -212,7 +226,10 @@ public:
   virtual void provideValue(BuildSystemCommandInterface&, Task*,
                                  uintptr_t inputID,
                                  const BuildValue&) override {}
-  virtual void inputsAvailable(BuildSystemCommandInterface&, Task*) override {}
+  virtual BuildValue execute(BuildSystemCommandInterface&, Task*,
+                             QueueJobContext*) override {
+    return BuildValue::makeFailedCommand();
+  }
 };
 
 class ParseDummyTool : public Tool {
@@ -377,7 +394,7 @@ static int executeParseCommand(std::vector<std::string> args) {
     } else if (option == "--no-output") {
       showOutput = false;
     } else {
-      fprintf(stderr, "\error: %s: invalid option: '%s'\n\n",
+      fprintf(stderr, "error: %s: invalid option: '%s'\n\n",
               getProgramName(), option.c_str());
       parseUsage(1);
     }
@@ -405,21 +422,111 @@ static int executeParseCommand(std::vector<std::string> args) {
 
 class BasicBuildSystemFrontendDelegate : public BuildSystemFrontendDelegate {
   std::unique_ptr<basic::FileSystem> fileSystem;
+
+  /// The previous SIGINT handler.
+  struct sigaction previousSigintHandler;
+
+  /// Low-level flag for when a SIGINT has been received.
+  static std::atomic<bool> wasInterrupted;
+
+  /// Pipe used to allow detection of signals.
+  static int signalWatchingPipe[2];
+
+  static void sigintHandler(int) {
+    // Set the atomic interrupt flag.
+    BasicBuildSystemFrontendDelegate::wasInterrupted = true;
+
+    // Write to wake up the signal monitoring thread.
+    char byte{};
+    basic::sys::write(signalWatchingPipe[1], &byte, 1);
+  }
+
+  /// Check if an interrupt has occurred.
+  void checkForInterrupt() {
+    // Save and clear the interrupt flag, atomically.
+    bool wasInterrupted = BasicBuildSystemFrontendDelegate::wasInterrupted.exchange(false);
+
+    // Process the interrupt flag, if present.
+    if (wasInterrupted) {
+      // Otherwise, cancel the build.
+      printf("cancelling build.\n");
+      cancel();
+    }
+  }
+
+  /// Thread function to wait for indications that signals have arrived and to
+  /// process them.
+  void signalWaitThread() {
+    // Wait for signal arrival indications.
+    while (true) {
+      char byte;
+      int res = basic::sys::read(signalWatchingPipe[0], &byte, 1);
+
+      // If nothing was read, the pipe has been closed and we should shut down.
+      if (res == 0)
+        break;
+
+      // Otherwise, check if we were awoke because of an interrupt.
+      checkForInterrupt();
+    }
+
+    // Shut down the pipe.
+    basic::sys::close(signalWatchingPipe[0]);
+    signalWatchingPipe[0] = -1;
+  }
   
 public:
   BasicBuildSystemFrontendDelegate(llvm::SourceMgr& sourceMgr,
                                    const BuildSystemInvocation& invocation)
       : BuildSystemFrontendDelegate(sourceMgr, invocation,
                                     "basic", /*version=*/0),
-        fileSystem(basic::createLocalFileSystem()) {}
+        fileSystem(basic::createLocalFileSystem()) {
+    // Register an interrupt handler.
+    struct sigaction action{};
+    action.sa_handler = &BasicBuildSystemFrontendDelegate::sigintHandler;
+    sigaction(SIGINT, &action, &previousSigintHandler);
+
+    // Create a pipe and thread to watch for signals.
+    assert(BasicBuildSystemFrontendDelegate::signalWatchingPipe[0] == -1 &&
+           BasicBuildSystemFrontendDelegate::signalWatchingPipe[1] == -1);
+    if (basic::sys::pipe(BasicBuildSystemFrontendDelegate::signalWatchingPipe) < 0) {
+      perror("pipe");
+    }
+    new std::thread(&BasicBuildSystemFrontendDelegate::signalWaitThread, this);
+  }
+
+  ~BasicBuildSystemFrontendDelegate() {
+    // Restore any previous SIGINT handler.
+    sigaction(SIGINT, &previousSigintHandler, NULL);
+
+    // Close the signal watching pipe.
+    basic::sys::close(BasicBuildSystemFrontendDelegate::signalWatchingPipe[1]);
+    signalWatchingPipe[1] = -1;
+  }
 
   virtual basic::FileSystem& getFileSystem() override { return *fileSystem; }
+
+  virtual void hadCommandFailure() override {
+    // Call the base implementation.
+    BuildSystemFrontendDelegate::hadCommandFailure();
+
+    // Cancel the build, by default.
+    cancel();
+  }
 
   virtual std::unique_ptr<Tool> lookupTool(StringRef name) override {
     // We do not support any non-built-in tools.
     return nullptr;
   }
+
+  virtual void cycleDetected(const std::vector<Rule*>& cycle) override {
+    auto message = BuildSystemInvocation::formatDetectedCycle(cycle);
+    error(message);
+  }
 };
+
+std::atomic<bool> BasicBuildSystemFrontendDelegate::wasInterrupted{false};
+int BasicBuildSystemFrontendDelegate::signalWatchingPipe[2]{-1, -1};
 
 static void buildUsage(int exitCode) {
   int optionWidth = 25;
@@ -463,6 +570,12 @@ static int executeBuildCommand(std::vector<std::string> args) {
   BasicBuildSystemFrontendDelegate delegate(sourceMgr, invocation);
   BuildSystemFrontend frontend(delegate, invocation);
   if (!frontend.build(targetToBuild)) {
+    // If there were failed commands, report the count and return an error.
+    if (delegate.getNumFailedCommands()) {
+      delegate.error("build had " + Twine(delegate.getNumFailedCommands()) +
+                     " command failures");
+    }
+
     return 1;
   }
 

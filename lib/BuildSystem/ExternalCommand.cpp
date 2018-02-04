@@ -13,6 +13,7 @@
 #include "llbuild/BuildSystem/ExternalCommand.h"
 
 #include "llbuild/Basic/Hashing.h"
+#include "llbuild/Basic/FileSystem.h"
 #include "llbuild/BuildSystem/BuildExecutionQueue.h"
 #include "llbuild/BuildSystem/BuildFile.h"
 #include "llbuild/BuildSystem/BuildKey.h"
@@ -117,16 +118,23 @@ bool ExternalCommand::configureAttribute(
 
 BuildValue ExternalCommand::
 getResultForOutput(Node* node, const BuildValue& value) {
-  // If the value was a failed or skipped command, propagate the failure.
-  if (value.isFailedCommand() || value.isSkippedCommand())
+  // If the value was a failed or cancelled command, propagate the failure.
+  if (value.isFailedCommand() || value.isPropagatedFailureCommand() ||
+      value.isCancelledCommand())
     return BuildValue::makeFailedInput();
+  if (value.isSkippedCommand())
+      return BuildValue::makeSkippedCommand();
 
   // Otherwise, we should have a successful command -- return the actual
   // result for the output.
   assert(value.isSuccessfulCommand());
 
   // If the node is virtual, the output is always a virtual input value.
-  if (static_cast<BuildNode*>(node)->isVirtual()) {
+  //
+  // FIXME: Eliminate this, and make the build value array contain an array of
+  // build values.
+  auto buildNode = static_cast<BuildNode*>(node);
+  if (buildNode->isVirtual() && !buildNode->isCommandTimestamp()) {
     return BuildValue::makeVirtualInput();
   }
     
@@ -168,7 +176,7 @@ bool ExternalCommand::isResultValid(BuildSystem& system,
     // Ignore virtual outputs.
     if (node->isVirtual())
       continue;
-      
+
     // Rebuild if the output information has changed.
     //
     // We intentionally allow missing outputs here, as long as they haven't
@@ -184,6 +192,15 @@ bool ExternalCommand::isResultValid(BuildSystem& system,
     // could enable behavior to remove such output files if annotated prior to
     // running the command.
     auto info = node->getFileInfo(system.getDelegate().getFileSystem());
+
+    // If this output is mutated by the build, we can't rely on equivalence,
+    // only existence.
+    if (node->isMutated()) {
+      if (value.getNthOutputInfo(i).isMissing() != info.isMissing())
+        return false;
+      continue;
+    }
+
     if (value.getNthOutputInfo(i) != info)
       return false;
   }
@@ -194,11 +211,8 @@ bool ExternalCommand::isResultValid(BuildSystem& system,
 
 void ExternalCommand::start(BuildSystemCommandInterface& bsci,
                             core::Task* task) {
-  // Notify the client the command is preparing to run.
-  bsci.getDelegate().commandPreparing(this);
-    
   // Initialize the build state.
-  shouldSkip = false;
+  skipValue = llvm::None;
   hasMissingInput = false;
 
   // Request all of the inputs.
@@ -227,13 +241,16 @@ void ExternalCommand::provideValue(BuildSystemCommandInterface& bsci,
   assert(!value.hasMultipleOutputs());
   assert(value.isExistingInput() || value.isMissingInput() ||
          value.isMissingOutput() || value.isFailedInput() ||
-         value.isVirtualInput());
+         value.isVirtualInput()  || value.isSkippedCommand() ||
+         value.isDirectoryTreeSignature() || value.isStaleFileRemoval());
 
-  // Predicate for whether the input should cause the command to skip.
-  auto shouldSkipForInput = [&] {
-    // If the value is an existing or virtual input, we are always good.
-    if (value.isExistingInput() || value.isVirtualInput())
-      return false;
+  // If the input should cause this command to skip, how should it skip?
+  auto getSkipValueForInput = [&]() -> llvm::Optional<BuildValue> {
+    // If the value is an signature, existing, or virtual input, we are always
+    // good.
+    if (value.isDirectoryTreeSignature() | value.isExistingInput() ||
+        value.isVirtualInput() || value.isStaleFileRemoval())
+      return llvm::None;
 
     // We explicitly allow running the command against a missing output, under
     // the expectation that responsibility for reporting this situation falls to
@@ -242,19 +259,31 @@ void ExternalCommand::provideValue(BuildSystemCommandInterface& bsci,
     // FIXME: Eventually, it might be nice to harden the format so that we know
     // when an output was actually required versus optional.
     if (value.isMissingOutput())
-      return false;
+      return llvm::None;
 
     // If the value is a missing input, but those are allowed, it is ok.
-    if (allowMissingInputs && value.isMissingInput())
-      return false;
+    if (value.isMissingInput()) {
+      if (allowMissingInputs)
+        return llvm::None;
+      else
+        return BuildValue::makePropagatedFailureCommand();
+    }
 
-    // For anything else, this is an error and the command should be skipped.
-    return true;
+    // Propagate failure.
+    if (value.isFailedInput())
+      return BuildValue::makePropagatedFailureCommand();
+
+    // A skipped dependency doesn't cause this command to skip.
+    if (value.isSkippedCommand())
+        return llvm::None;
+
+    llvm_unreachable("unexpected input");
   };
 
   // Check if we need to skip the command because of this input.
-  if (shouldSkipForInput()) {
-    shouldSkip = true;
+  auto skipValueForInput = getSkipValueForInput();
+  if (skipValueForInput.hasValue()) {
+    skipValue = std::move(skipValueForInput);
     if (value.isMissingInput()) {
       hasMissingInput = true;
 
@@ -295,7 +324,14 @@ ExternalCommand::computeCommandResult(BuildSystemCommandInterface& bsci) {
   // FIXME: We need to delegate to the node here.
   SmallVector<FileInfo, 8> outputInfos;
   for (auto* node: outputs) {
-    if (node->isVirtual()) {
+    if (node->isCommandTimestamp()) {
+      // FIXME: We currently have to shoehorn the timestamp into a fake file
+      // info, but need to refactor the command result to just store the node
+      // subvalues instead.
+      FileInfo info{};
+      info.size = bsci.getBuildEngine().getCurrentTimestamp();
+      outputInfos.push_back(info);
+    } else if (node->isVirtual()) {
       outputInfos.push_back(FileInfo{});
     } else {
       outputInfos.push_back(node->getFileInfo(
@@ -305,16 +341,11 @@ ExternalCommand::computeCommandResult(BuildSystemCommandInterface& bsci) {
   return BuildValue::makeSuccessfulCommand(outputInfos, getSignature());
 }
 
-void ExternalCommand::inputsAvailable(BuildSystemCommandInterface& bsci,
-                                      core::Task* task) {
-  // If the build should cancel, do nothing.
-  if (bsci.getDelegate().isCancelled()) {
-    bsci.taskIsComplete(task, BuildValue::makeSkippedCommand());
-    return;
-  }
-    
+BuildValue ExternalCommand::execute(BuildSystemCommandInterface& bsci,
+                                    core::Task* task,
+                                    QueueJobContext* context) {
   // If this command should be skipped, do nothing.
-  if (shouldSkip) {
+  if (skipValue.hasValue()) {
     // If this command had a failed input, treat it as having failed.
     if (hasMissingInput) {
       // FIXME: Design the logging and status output APIs.
@@ -326,8 +357,7 @@ void ExternalCommand::inputsAvailable(BuildSystemCommandInterface& bsci,
       bsci.getDelegate().hadCommandFailure();
     }
 
-    bsci.taskIsComplete(task, BuildValue::makeSkippedCommand());
-    return;
+    return std::move(skipValue.getValue());
   }
   assert(!hasMissingInput);
 
@@ -336,53 +366,43 @@ void ExternalCommand::inputsAvailable(BuildSystemCommandInterface& bsci,
       hasPriorResult && priorResultCommandSignature == getSignature()) {
     BuildValue result = computeCommandResult(bsci);
     if (canUpdateIfNewerWithResult(result)) {
-      bsci.taskIsComplete(task, result);
-      return;
+      return result;
+    }
+  }
+
+  // Create the directories for the directories containing file outputs.
+  //
+  // FIXME: Implement a shared cache for this, to reduce the number of
+  // syscalls required to make this happen.
+  for (auto* node: outputs) {
+    if (!node->isVirtual()) {
+      // Attempt to create the directory; we ignore errors here under the
+      // assumption the command will diagnose the situation if necessary.
+      //
+      // FIXME: Need to use the filesystem interfaces.
+      auto parent = llvm::sys::path::parent_path(node->getName());
+      if (!parent.empty()) {
+        (void) bsci.getDelegate().getFileSystem().createDirectories(parent);
+      }
     }
   }
     
-  // Suppress static analyzer false positive on generalized lambda capture
-  // (rdar://problem/22165130).
-#ifndef __clang_analyzer__
-  auto fn = [this, &bsci=bsci, task](QueueJobContext* context) {
-    // Notify the client the actual command body is going to run.
-    bsci.getDelegate().commandStarted(this);
-
-    // Create the directories for the directories containing file outputs.
-    //
-    // FIXME: Implement a shared cache for this, to reduce the number of
-    // syscalls required to make this happen.
-    for (auto* node: outputs) {
-      if (!node->isVirtual()) {
-        // Attempt to create the directory; we ignore errors here under the
-        // assumption the command will diagnose the situation if necessary.
-        //
-        // FIXME: Need to use the filesystem interfaces.
-        auto parent = llvm::sys::path::parent_path(node->getName());
-        if (!parent.empty()) {
-          (void) llvm::sys::fs::create_directories(parent);
-        }
-      }
-    }
+  // Invoke the external command.
+  bsci.getDelegate().commandStarted(this);
+  auto result = executeExternalCommand(bsci, task, context);
+  bsci.getDelegate().commandFinished(this, result);
     
-    // Invoke the external command.
-    auto result = executeExternalCommand(bsci, task, context);
-    
-    // Notify the client the command is complete.
-    bsci.getDelegate().commandFinished(this);
-    
-    // Process the result.
-    if (!result) {
-      bsci.getDelegate().hadCommandFailure();
-
-      // If the command failed, the result is failure.
-      bsci.taskIsComplete(task, BuildValue::makeFailedCommand());
-      return;
-    }
-
-    // Otherwise, complete with a successful result.
-    bsci.taskIsComplete(task, computeCommandResult(bsci));
-  };
-  bsci.addJob({ this, std::move(fn) });
-#endif
+  // Process the result.
+  switch (result) {
+  case CommandResult::Failed:
+    return BuildValue::makeFailedCommand();
+  case CommandResult::Cancelled:
+    return BuildValue::makeCancelledCommand();
+  case CommandResult::Succeeded:
+    return computeCommandResult(bsci);
+  case CommandResult::Skipped:
+    // It is illegal to get skipped result at this point.
+    break;
+  }
+  llvm::report_fatal_error("unknown result");
 }

@@ -42,11 +42,30 @@ public:
   FileSystem() {}
   virtual ~FileSystem();
 
+  /// Create the given directory if it does not exist.
+  ///
+  /// \returns True on success (the directory was created, or already exists).
+  virtual bool
+  createDirectory(const std::string& path) = 0;
+
+  /// Create the given directory (recursively) if it does not exist.
+  ///
+  /// \returns True on success (the directory was created, or already exists).
+  virtual bool
+  createDirectories(const std::string& path);
+
   /// Get a memory buffer for a given file on the file system.
   ///
   /// \returns The file contents, on success, or null on error.
   virtual std::unique_ptr<llvm::MemoryBuffer>
   getFileContents(const std::string& path) = 0;
+
+  /// Remove the file or directory at the given path.
+  ///
+  /// Directory removal is recursive.
+  ///
+  /// \returns True if the item was removed, false otherwise.
+  virtual bool remove(const std::string& path) = 0;
   
   /// Get the information to represent the state of the given path in the file
   /// system.

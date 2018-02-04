@@ -1,6 +1,12 @@
-//===-- BuildEngine.mm ---------------------------------------------------===//
+//===- CorePerfTests.mm ---------------------------------------------------===//
 //
-// Copyright (c) 2014 Apple Inc. All rights reserved.
+// This source file is part of the Swift.org open source project
+//
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
+// Licensed under Apache License v2.0 with Runtime Library Exception
+//
+// See http://swift.org/LICENSE.txt for license information
+// See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 //===----------------------------------------------------------------------===//
 
@@ -141,6 +147,11 @@ static ActionFn simpleAction(const std::vector<KeyType>& Inputs,
       fprintf(stderr, "error: unexpected cycle\n");
       abort();
     }
+
+    virtual void error(const Twine& message) override {
+      fprintf(stderr, "error: %s\n", message.str().c_str());
+      abort();
+    }
   } Delegate;
   __block core::BuildEngine Engine(Delegate);
   int LastInputValue = 0;
@@ -214,6 +225,11 @@ static int64_t i64pow(int64_t Value, int64_t Exponent) {
     virtual void cycleDetected(const std::vector<core::Rule*>& Cycle) override {
       // We never expect to find a cycle.
       fprintf(stderr, "error: unexpected cycle\n");
+      abort();
+    }
+
+    virtual void error(const Twine& message) override {
+      fprintf(stderr, "error: %s\n", message.str().c_str());
       abort();
     }
   } Delegate;
@@ -293,6 +309,11 @@ static int64_t i64pow(int64_t Value, int64_t Exponent) {
     virtual void cycleDetected(const std::vector<core::Rule*>& Cycle) override {
       // We never expect to find a cycle.
       fprintf(stderr, "error: unexpected cycle\n");
+      abort();
+    }
+
+    virtual void error(const Twine& message) override {
+      fprintf(stderr, "error: %s\n", message.str().c_str());
       abort();
     }
   } Delegate;

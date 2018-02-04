@@ -14,6 +14,7 @@
 
 #include "llbuild/Basic/FileSystem.h"
 #include "llbuild/Basic/Version.h"
+#include "llbuild/BuildSystem/BuildDescription.h"
 #include "llbuild/BuildSystem/BuildFile.h"
 #include "llbuild/BuildSystem/SwiftTools.h"
 
@@ -35,6 +36,14 @@ public:
       fileSystem(basic::createLocalFileSystem()) {}
 
   virtual basic::FileSystem& getFileSystem() override { return *fileSystem; }
+
+  virtual void hadCommandFailure() override {
+    // Call the base implementation.
+    BuildSystemFrontendDelegate::hadCommandFailure();
+
+    // Cancel the build, by default.
+    cancel();
+  }
   
   virtual std::unique_ptr<Tool> lookupTool(StringRef name) override {
     if (name == "swift-compiler") {
@@ -42,6 +51,11 @@ public:
     }
 
     return nullptr;
+  }
+
+  virtual void cycleDetected(const std::vector<core::Rule*>& items) override {
+    auto message = BuildSystemInvocation::formatDetectedCycle(items);
+    error(message);
   }
 };
 

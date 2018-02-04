@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -15,10 +15,13 @@
 
 #include "llbuild/Basic/LLVM.h"
 #include "llbuild/BuildSystem/BuildSystem.h"
+#include "llbuild/Core/BuildEngine.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Optional.h"
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -39,6 +42,7 @@ namespace buildsystem {
 
 class BuildSystemFrontendDelegate;
 class BuildSystemInvocation;
+enum class CommandResult;
 
 /// This provides a standard "frontend" to the build system features, for use in
 /// building bespoke build systems that can still take advantage of desirable
@@ -48,10 +52,13 @@ class BuildSystemInvocation;
 /// to provide:
 ///   o Support for common command line options.
 ///   o Support for parallel, persistent builds.
-//    o Support for command line diagnostics and status reporting.
+///   o Support for command line diagnostics and status reporting.
+///
+/// NOTE: This class is *NOT* thread safe.
 class BuildSystemFrontend {
   BuildSystemFrontendDelegate& delegate;
   const BuildSystemInvocation& invocation;
+  llvm::Optional<BuildSystem> buildSystem;
 
 public:
   BuildSystemFrontend(BuildSystemFrontendDelegate& delegate,
@@ -70,6 +77,16 @@ public:
   /// @name Client API
   /// @{
 
+  /// Initialize the build system.
+  ///
+  /// This will load the manifest and apply all of the command line options to
+  /// construct an appropriate underlying `BuildSystem` for use by subsequent
+  /// build calls.
+  ///
+  /// \returns True on success, or false if there were errors. If initialization
+  /// fails, the frontend is in an indeterminant state and should not be reused.
+  bool initialize();
+  
   /// Build the named target using the specified invocation parameters.
   ///
   /// \returns True on success, or false if there were errors.
@@ -123,9 +140,11 @@ public:
   /// Provides an appropriate execution queue based on the invocation options.
   virtual std::unique_ptr<BuildExecutionQueue> createExecutionQueue() override;
 
-  /// Provides a default cancellation implementation that will cancel when any
-  /// command has failed.
-  virtual bool isCancelled() override;
+  /// Cancels the current build.
+  virtual void cancel();
+
+  /// Reset mutable build state before a new build operation.
+  void resetForBuild();
   
   /// Provides a default handler.
   ///
@@ -159,14 +178,46 @@ public:
   /// corresponding \see commandFinished() call.
   virtual void commandPreparing(Command*) override;
 
+  /// Called by the build system to allow the delegate to skip a command without
+  /// implicitly skipping its dependents.
+  ///
+  /// WARNING: Clients need to take special care when using this. Skipping
+  /// commands without considering their dependencies or dependents can easily
+  /// produce an inconsistent build.
+  ///
+  /// This method is called before the command starts, when the system has
+  /// identified that it will eventually need to run (after all of its inputs
+  /// have been satisfied).
+  ///
+  /// The system guarantees that all such calls will be paired with a
+  /// corresponding \see commandFinished() call.
+  virtual bool shouldCommandStart(Command*) override;
+
   /// Called by the build system to report that a declared command has started.
   ///
   /// The system guarantees that all such calls will be paired with a
   /// corresponding \see commandFinished() call.
   virtual void commandStarted(Command*) override;
 
+  /// Called to report an error during the execution of a command.
+  ///
+  /// \param data - The error message.
+  virtual void commandHadError(Command*, StringRef data) override;
+
+  /// Called to report a note during the execution of a command.
+  ///
+  /// \param data - The note message.
+  virtual void commandHadNote(Command*, StringRef data) override;
+
+  /// Called to report a warning during the execution of a command.
+  ///
+  /// \param data - The warning message.
+  virtual void commandHadWarning(Command*, StringRef data) override;
+
   /// Called by the build system to report a command has completed.
-  virtual void commandFinished(Command*) override;
+  ///
+  /// \param result - The result of command (e.g. success, failure, etc).
+  virtual void commandFinished(Command*, CommandResult result) override;
 
   /// Called when a command's job has been started.
   ///
@@ -216,12 +267,22 @@ public:
   /// \param handle - The handle used to identify the process. This handle will
   /// become invalid as soon as the client returns from this API call.
   ///
-  /// \param exitStatus - The exit status of the process.
+  /// \param result - Whether the process suceeded, failed or was cancelled.
+  /// \param exitStatus - The raw exit status of the process.
   //
   // FIXME: Need to include additional information on the status here, e.g., the
   // signal status, and the process output (if buffering).
   virtual void commandProcessFinished(Command*, ProcessHandle handle,
+                                      CommandResult result,
                                       int exitStatus);
+
+  /// Called when a cycle is detected by the build engine and it cannot make
+  /// forward progress.
+  ///
+  /// \param items The ordered list of items comprising the cycle, starting from
+  /// the node which was requested to build and ending with the first node in
+  /// the cycle (i.e., the node participating in the cycle will appear twice).
+  virtual void cycleDetected(const std::vector<core::Rule*>& items) = 0;
 
   /// @}
   
@@ -269,6 +330,14 @@ public:
   /// The path of the build trace output file to use, if any.
   std::string traceFilePath = "";
 
+  /// The base environment to use when executing subprocesses.
+  ///
+  /// The format is expected to match that of `::main()`, i.e. a null-terminated
+  /// array of pointers to null terminated C strings.
+  ///
+  /// If empty, the environment of the calling process will be used.
+  const char* const* environment = nullptr;
+
   /// The positional arguments.
   std::vector<std::string> positionalArgs;
 
@@ -283,6 +352,9 @@ public:
   ///
   /// \param sourceMgr The source manager to use for diagnostics.
   void parse(ArrayRef<std::string> args, llvm::SourceMgr& sourceMgr);
+
+  /// Provides a default string representation for a cycle detected by the build engine.
+  static std::string formatDetectedCycle(const std::vector<core::Rule*>& cycle);
 };
 
 }

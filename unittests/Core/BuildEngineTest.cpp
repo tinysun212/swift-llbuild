@@ -14,6 +14,9 @@
 
 #include "llbuild/Core/BuildDB.h"
 
+#include "llvm/ADT/StringMap.h"
+#include "llvm/Support/ErrorHandling.h"
+
 #include "gtest/gtest.h"
 
 #include <unordered_map>
@@ -25,6 +28,11 @@ using namespace llbuild::core;
 namespace {
 
 class SimpleBuildEngineDelegate : public core::BuildEngineDelegate {
+  /// The cycle, if one was detected during building.
+public:
+  std::vector<std::string> cycle;
+
+private:
   virtual core::Rule lookupRule(const core::KeyType& key) override {
     // We never expect dynamic rule lookup.
     fprintf(stderr, "error: unexpected rule lookup for \"%s\"\n",
@@ -34,8 +42,13 @@ class SimpleBuildEngineDelegate : public core::BuildEngineDelegate {
   }
 
   virtual void cycleDetected(const std::vector<core::Rule*>& items) override {
-    // We never expect a cycle.
-    fprintf(stderr, "error: cycle\n");
+    cycle.clear();
+    std::transform(items.begin(), items.end(), std::back_inserter(cycle),
+                   [](auto rule) { return std::string(rule->key); });
+  }
+
+  virtual void error(const Twine& message) override {
+    fprintf(stderr, "error: %s\n", message.str().c_str());
     abort();
   }
 };
@@ -60,22 +73,26 @@ static core::ValueType intToValue(int32_t value) {
 // them all, and then provides the output.
 class SimpleTask : public Task {
 public:
+  typedef std::function<std::vector<KeyType>()> InputListingFnType;
   typedef std::function<int(const std::vector<int>&)> ComputeFnType;
 
 private:
-  std::vector<KeyType> inputs;
+  InputListingFnType listInputs;
   std::vector<int> inputValues;
   ComputeFnType compute;
 
 public:
-  SimpleTask(const std::vector<KeyType>& inputs, ComputeFnType compute)
-      : inputs(inputs), compute(compute)
+  SimpleTask(InputListingFnType listInputs, ComputeFnType compute)
+      : listInputs(listInputs), compute(compute)
   {
-    inputValues.resize(inputs.size());
   }
 
   virtual void start(BuildEngine& engine) override {
+    // Compute the list of inputs.
+    auto inputs = listInputs();
+
     // Request all of the inputs.
+    inputValues.resize(inputs.size());
     for (int i = 0, e = inputs.size(); i != e; ++i) {
       engine.taskNeedsInput(this, inputs[i], i);
     }
@@ -99,7 +116,8 @@ typedef std::function<Task*(BuildEngine&)> ActionFn;
 static ActionFn simpleAction(const std::vector<KeyType>& inputs,
                              SimpleTask::ComputeFnType compute) {
   return [=] (BuildEngine& engine) {
-    return engine.registerTask(new SimpleTask(inputs, compute)); };
+    return engine.registerTask(new SimpleTask([inputs]{ return inputs; },
+                                              compute)); };
 }
 
 TEST(BuildEngineTest, basic) {
@@ -402,25 +420,43 @@ TEST(BuildEngineTest, incrementalDependency) {
   // Attach a custom database, used to get the results.
   class CustomDB : public BuildDB {
   public:
-    std::unordered_map<core::KeyType, Result> ruleResults;
+    llvm::StringMap<bool> keyTable;
+    
+    std::unordered_map<KeyType, Result> ruleResults;
 
-    virtual uint64_t getCurrentIteration() override {
+    virtual KeyID getKeyID(const KeyType& key) override {
+      auto it = keyTable.insert(std::make_pair(key, false)).first;
+      return (KeyID)(uintptr_t)it->getKey().data();
+    }
+
+    virtual KeyType getKeyForID(KeyID keyID) override {
+      return llvm::StringMapEntry<bool>::GetStringMapEntryFromKeyData(
+          (const char*)(uintptr_t)keyID).getKey();
+    }
+    
+    virtual uint64_t getCurrentIteration(bool* success_out, std::string* error_out) override {
       return 0;
     }
-    virtual void setCurrentIteration(uint64_t value) override {}
-    virtual bool lookupRuleResult(const Rule& rule,
-                                  Result* result_out) override {
+    virtual bool setCurrentIteration(uint64_t value, std::string* error_out) override { return true; }
+    virtual bool lookupRuleResult(KeyID keyID,
+                                  const Rule& rule,
+                                  Result* result_out,
+                                  std::string* error_out) override {
       return false;
     }
-    virtual void setRuleResult(const Rule& rule,
-                               const Result& result) override {
+    virtual bool setRuleResult(KeyID key,
+                               const Rule& rule,
+                               const Result& result,
+                               std::string* error_out) override {
       ruleResults[rule.key] = result;
+      return true;
     }
-    virtual void buildStarted() override {}
+    virtual bool buildStarted(std::string* error_out) override { return true; }
     virtual void buildComplete() override {}
   };
   CustomDB *db = new CustomDB();
-  engine.attachDB(std::unique_ptr<CustomDB>(db));
+  std::string error;
+  engine.attachDB(std::unique_ptr<CustomDB>(db), &error);
 
   int valueA = 2;
   engine.addRule({
@@ -665,6 +701,115 @@ TEST(BuildEngineTest, StatusCallbacks) {
   EXPECT_EQ(2 * 3, intFromValue(engine.build("output")));
   EXPECT_EQ(2U, numScanned);
   EXPECT_EQ(2U, numComplete);
+}
+
+/// Check basic cycle detection.
+TEST(BuildEngineTest, SimpleCycle) {
+  SimpleBuildEngineDelegate delegate;
+  core::BuildEngine engine(delegate);
+  engine.addRule({
+      "A",
+      simpleAction({"B"}, [&](const std::vector<int>& inputs) {
+          return 2; }) });
+  engine.addRule({
+      "B",
+      simpleAction({"A"}, [&](const std::vector<int>& inputs) {
+          return 2; }) });
+
+  // Build the result.
+  auto result = engine.build("A");
+  EXPECT_EQ(ValueType{}, result);
+  EXPECT_EQ(std::vector<std::string>({ "A", "B", "A" }), delegate.cycle);
+}
+
+/// Check detection of a cycle discovered during scanning from input.
+TEST(BuildEngineTest, CycleDuringScanningFromTop) {
+  SimpleBuildEngineDelegate delegate;
+  core::BuildEngine engine(delegate);
+  unsigned iteration = 0;
+  engine.addRule({
+      "A",
+      [&](BuildEngine& engine) {
+        return engine.registerTask(
+            new SimpleTask(
+                [&]() -> std::vector<std::string> {
+                  switch (iteration) {
+                  case 0:
+                    return { "B", "C" };
+                  case 1:
+                    return { "B" };
+                  default:
+                    llvm::report_fatal_error("unexpected iterator");
+                  }
+                },
+                [&](const std::vector<int>& inputs) {
+                  return 2; }));
+        },
+      [&](BuildEngine&, const Rule& rule, const ValueType& value) {
+        // Always rebuild
+        return true;
+      }
+    });
+  engine.addRule({
+      "B",
+      [&](BuildEngine& engine) {
+        return engine.registerTask(
+            new SimpleTask(
+                [&]() -> std::vector<std::string> {
+                  switch (iteration) {
+                  case 0:
+                    return { "C" };
+                  case 1:
+                    return { "C" };
+                  default:
+                    llvm::report_fatal_error("unexpected iterator");
+                  }
+                },
+                [&](const std::vector<int>& inputs) {
+                  return 2; }));
+        },
+      [&](BuildEngine&, const Rule& rule, const ValueType& value) {
+        // Always rebuild
+        return true;
+      }
+    });
+  engine.addRule({
+      "C",
+      [&](BuildEngine& engine) {
+        return engine.registerTask(
+            new SimpleTask(
+                [&]() -> std::vector<std::string> {
+                  switch (iteration) {
+                  case 0:
+                    return { };
+                  case 1:
+                    return { "B" };
+                  default:
+                    llvm::report_fatal_error("unexpected iterator");
+                  }
+                },
+                [&](const std::vector<int>& inputs) {
+                  return 2; }));
+        },
+      [&](BuildEngine&, const Rule& rule, const ValueType& value) {
+        // Always rebuild
+        return false;
+      }
+    });
+
+  // Build the result.
+  {
+    EXPECT_EQ(2, intFromValue(engine.build("A")));
+    EXPECT_EQ(std::vector<std::string>({}), delegate.cycle);
+  }
+
+  // Introduce a cycle, and rebuild.
+  {
+    iteration = 1;
+    auto result = engine.build("A");
+    EXPECT_EQ(ValueType{}, result);
+    EXPECT_EQ(std::vector<std::string>({ "A", "C", "B", "C" }), delegate.cycle);
+  }
 }
 
 }

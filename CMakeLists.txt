@@ -14,7 +14,7 @@ endif()
 
 # Configure the default set of bindings to build.
 if(NOT DEFINED LLBUILD_SUPPORT_BINDINGS)
-  set(LLBUILD_SUPPORT_BINDINGS "Swift")
+  set(LLBUILD_SUPPORT_BINDINGS "")
 endif()
 
 
@@ -69,10 +69,11 @@ set(LLBUILD_EXECUTABLE_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INT
 set(LLBUILD_LIBRARY_OUTPUT_INTDIR ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib)
 
 ###
-# Requires Support Tools
+# Support Tools
 
-find_package(Lit REQUIRED)
-find_package(FileCheck REQUIRED)
+find_package(Lit)
+find_package(FileCheck)
+find_package(PythonInterp)
 
 # Check if we should build the Swift bindings.
 if (";${LLBUILD_SUPPORT_BINDINGS};" MATCHES ";Swift;")
@@ -111,6 +112,21 @@ endif()
 # Find includes in the source directory.
 include_directories(BEFORE
   ${CMAKE_SOURCE_DIR}/include)
+
+# On FreeBSD, /usr/local/* is not used by default. In order to build LLVM
+# with sqlite3, etc., we must add /usr/local paths.
+if(${CMAKE_SYSTEM_NAME} MATCHES "(FreeBSD|DragonFly)")
+  include_directories("/usr/local/include")
+  link_directories("/usr/local/lib")
+endif(${CMAKE_SYSTEM_NAME} MATCHES "(FreeBSD|DragonFly)")
+
+if(NOT ${LLBUILD_PATH_TO_SQLITE_SOURCE} STREQUAL "")
+  include_directories("${LLBUILD_PATH_TO_SQLITE_SOURCE}")
+endif()
+
+if(NOT "${LLBUILD_PATH_TO_SQLITE_BUILD}" STREQUAL "")
+  link_directories("${LLBUILD_PATH_TO_SQLITE_BUILD}")
+endif()
 
 # Xcode: Use libc++ and c++14 using proper build settings.
 if (XCODE)
@@ -151,6 +167,20 @@ if (XCODE)
 
   # Disable headermaps.
   set(CMAKE_XCODE_ATTRIBUTE_USE_HEADERMAP "NO") 
+elseif(MSVC)
+  # Disable unknown pragma warnings (e.g. for #pragma mark).
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4068")
+
+  # TODO: these warnings come from llvmSupport. Since we don't want to diverge from llvmSupport by
+  # addressing these warnings , disable these for now to clean the build log.
+  # If/when we move to use LLVM's own llvmSupport, we should reenable these warnings.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4996") # POSIX name for this item is deprecated.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4244") # Signed conversion.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4267") # Possible loss of data conversions.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4291") # Operator new with no matching delete found.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4800") # Forcing value to bool 'true' or 'false'.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4146") # Unary minus applied to unsigned type.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -wd4141") # 'inline' used more than once.
 else ()
   # Compile with C++14, without RTTI or exceptions.
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -fno-rtti -fno-exceptions")
@@ -170,8 +200,12 @@ else ()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wnon-virtual-dtor")
 endif ()
 
-# On Linux, always build with PIC.
-if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+if (${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DLLVM_ON_WIN32")
+endif()
+
+# On BSD and Linux, always build with PIC.
+if(${CMAKE_SYSTEM_NAME} MATCHES ".*BSD" OR ${CMAKE_SYSTEM_NAME} MATCHES "Linux")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 endif ()

@@ -10,11 +10,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llbuild/BuildSystem/CommandResult.h"
 #include "llbuild/BuildSystem/SwiftTools.h"
 
 #include "llbuild/Basic/FileSystem.h"
 #include "llbuild/Basic/Hashing.h"
 #include "llbuild/Basic/LLVM.h"
+#include "llbuild/Basic/PlatformUtility.h"
 #include "llbuild/BuildSystem/BuildExecutionQueue.h"
 #include "llbuild/BuildSystem/BuildFile.h"
 #include "llbuild/BuildSystem/BuildKey.h"
@@ -104,47 +106,39 @@ public:
                             uintptr_t inputID,
                             const BuildValue& value) override { }
 
-  virtual void inputsAvailable(BuildSystemCommandInterface& bsci,
-                               core::Task* task) override {
-    // Dispatch a task to query the compiler version.
-    auto fn = [this, &bsci=bsci, task=task](QueueJobContext* context) {
-      // Suppress static analyzer false positive on generalized lambda capture
-      // (rdar://problem/22165130).
-#ifndef __clang_analyzer__
-      // Construct the command line used to query the swift compiler version.
-      //
-      // FIXME: Need a decent subprocess interface.
-      SmallString<256> command;
-      llvm::raw_svector_ostream commandOS(command);
-      commandOS << executable;
-      commandOS << " " << "--version";
+  virtual BuildValue execute(BuildSystemCommandInterface& bsci,
+                             core::Task* task,
+                             QueueJobContext* context) override {
+    // Construct the command line used to query the swift compiler version.
+    //
+    // FIXME: Need a decent subprocess interface.
+    SmallString<256> command;
+    llvm::raw_svector_ostream commandOS(command);
+    commandOS << executable;
+    commandOS << " " << "--version";
 
-      // Read the result.
-      FILE *fp = ::popen(commandOS.str().str().c_str(), "r");
-      SmallString<4096> result;
-      if (fp) {
-        char buf[4096];
-        for (;;) {
-          ssize_t numRead = fread(buf, 1, sizeof(buf), fp);
-          if (numRead == 0) {
-            // FIXME: Error handling.
-            break;
-          }
-          result.append(StringRef(buf, numRead));
+    // Read the result.
+    FILE *fp = basic::sys::popen(commandOS.str().str().c_str(), "r");
+    SmallString<4096> result;
+    if (fp) {
+      char buf[4096];
+      for (;;) {
+        ssize_t numRead = fread(buf, 1, sizeof(buf), fp);
+        if (numRead == 0) {
+          // FIXME: Error handling.
+          break;
         }
-        pclose(fp);
+        result.append(StringRef(buf, numRead));
       }
+      basic::sys::pclose(fp);
+    }
 
-      // For now, we can get away with just encoding this as a successful
-      // command and relying on the signature to detect changes.
-      //
-      // FIXME: We should support BuildValues with arbitrary payloads.
-      bsci.taskIsComplete(task, BuildValue::makeSuccessfulCommand(
-                              basic::FileInfo{}, basic::hashString(result)));
-#endif
-    };
-    bsci.addJob({ this, std::move(fn) });
-    return;
+    // For now, we can get away with just encoding this as a successful
+    // command and relying on the signature to detect changes.
+    //
+    // FIXME: We should support BuildValues with arbitrary payloads.
+    return BuildValue::makeSuccessfulCommand(
+        basic::FileInfo{}, basic::hashString(result));
   }
 };
 
@@ -530,31 +524,31 @@ public:
     ExternalCommand::provideValue(bsci, task, inputID, value);
   }
 
-  virtual bool executeExternalCommand(BuildSystemCommandInterface& bsci,
-                                      core::Task* task,
-                                      QueueJobContext* context) override {
+  virtual CommandResult executeExternalCommand(BuildSystemCommandInterface& bsci,
+                                               core::Task* task,
+                                               QueueJobContext* context) override {
     // FIXME: Need to add support for required parameters.
     if (sourcesList.empty()) {
       bsci.getDelegate().error("", {}, "no configured 'sources'");
-      return false;
+      return CommandResult::Failed;
     }
     if (objectsList.empty()) {
       bsci.getDelegate().error("", {}, "no configured 'objects'");
-      return false;
+      return CommandResult::Failed;
     }
     if (moduleName.empty()) {
       bsci.getDelegate().error("", {}, "no configured 'module-name'");
-      return false;
+      return CommandResult::Failed;
     }
     if (tempsPath.empty()) {
       bsci.getDelegate().error("", {}, "no configured 'temps-path'");
-      return false;
+      return CommandResult::Failed;
     }
 
     if (sourcesList.size() != objectsList.size()) {
       bsci.getDelegate().error(
           "", {}, "'sources' and 'objects' are not the same size");
-      return false;
+      return CommandResult::Failed;
     }
 
     // Ensure the temporary directory exists.
@@ -563,8 +557,8 @@ public:
     //
     // FIXME: This should really be done using an additional implicit input, so
     // it only happens once per build.
-    (void)llvm::sys::fs::create_directories(tempsPath, /*ignoreExisting=*/true);
-
+    (void) bsci.getDelegate().getFileSystem().createDirectories(tempsPath);
+ 
     SmallString<64> outputFileMapPath;
     getOutputFileMapPath(outputFileMapPath);
     
@@ -575,21 +569,23 @@ public:
     // Write the output file map.
     std::vector<std::string> depsFiles;
     if (!writeOutputFileMap(bsci, outputFileMapPath, depsFiles))
-      return false;
+      return CommandResult::Failed;
 
     // Execute the command.
-    if (!bsci.getExecutionQueue().executeProcess(context, commandLine)) {
+    auto result = bsci.getExecutionQueue().executeProcess(context, commandLine);
+
+    if (result != CommandResult::Succeeded) {
       // If the command failed, there is no need to gather dependencies.
-      return false;
+      return result;
     }
 
     // Load all of the discovered dependencies.
     for (const auto& depsPath: depsFiles) {
       if (!processDiscoveredDependencies(bsci, task, depsPath))
-        return false;
+        return CommandResult::Failed;
     }
     
-    return true;
+    return result;
   }
 };
 

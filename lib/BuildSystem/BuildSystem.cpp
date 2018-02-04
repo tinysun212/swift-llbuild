@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -12,11 +12,14 @@
 
 #include "llbuild/BuildSystem/BuildSystem.h"
 #include "llbuild/BuildSystem/BuildSystemCommandInterface.h"
+#include "llbuild/BuildSystem/BuildSystemFrontend.h"
+#include "llbuild/BuildSystem/CommandResult.h"
 
 #include "llbuild/Basic/FileInfo.h"
 #include "llbuild/Basic/FileSystem.h"
 #include "llbuild/Basic/Hashing.h"
 #include "llbuild/Basic/LLVM.h"
+#include "llbuild/Basic/PlatformUtility.h"
 #include "llbuild/Basic/ShellUtility.h"
 #include "llbuild/Core/BuildDB.h"
 #include "llbuild/Core/BuildEngine.h"
@@ -42,6 +45,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <memory>
+#include <mutex>
+#include <set>
 
 #include <unistd.h>
 
@@ -64,6 +69,9 @@ class BuildSystemImpl;
 class BuildSystemFileDelegate : public BuildFileDelegate {
   BuildSystemImpl& system;
 
+  /// FIXME: It would be nice to have a StringSet.
+  llvm::StringMap<bool> internedStrings;
+
 public:
   BuildSystemFileDelegate(BuildSystemImpl& system)
       : BuildFileDelegate(), system(system) {}
@@ -72,6 +80,11 @@ public:
 
   /// @name Delegate Implementation
   /// @{
+
+  virtual StringRef getInternedString(StringRef value) override {
+    auto entry = internedStrings.insert(std::make_pair(value, true));
+    return entry.first->getKey();
+  }
 
   virtual FileSystem& getFileSystem() override {
     return getSystemDelegate().getFileSystem();
@@ -106,17 +119,18 @@ public:
 /// The delegate used to build a loaded build file.
 class BuildSystemEngineDelegate : public BuildEngineDelegate {
   BuildSystemImpl& system;
-
+  
   // FIXME: This is an inefficent map, the string is duplicated.
   std::unordered_map<std::string, std::unique_ptr<BuildNode>> dynamicNodes;
 
   /// The custom tasks which are owned by the build system.
   std::vector<std::unique_ptr<Command>> customTasks;
 
-  BuildFile& getBuildFile();
+  const BuildDescription& getBuildDescription() const;
 
   virtual Rule lookupRule(const KeyType& keyData) override;
   virtual void cycleDetected(const std::vector<Rule*>& items) override;
+  virtual void error(const Twine& message) override;
 
 public:
   BuildSystemEngineDelegate(BuildSystemImpl& system) : system(system) {}
@@ -128,7 +142,13 @@ public:
 
 class BuildSystemImpl : public BuildSystemCommandInterface {
   /// The internal schema version.
-  static const uint32_t internalSchemaVersion = 1;
+  ///
+  /// Version History:
+  /// * 7: Added StaleFileRemoval to BuildValue
+  /// * 6: Added DirectoryContents to BuildKey
+  /// * 5: Switch BuildValue to be BinaryCoding based
+  /// * 4: Pre-history
+  static const uint32_t internalSchemaVersion = 7;
   
   BuildSystem& buildSystem;
 
@@ -141,8 +161,8 @@ class BuildSystemImpl : public BuildSystemCommandInterface {
   /// The delegate used for the loading the build file.
   BuildSystemFileDelegate fileDelegate;
 
-  /// The build file the system is building.
-  BuildFile buildFile;
+  /// The build description, once loaded.
+  std::unique_ptr<BuildDescription> buildDescription;
 
   /// The delegate used for building the file contents.
   BuildSystemEngineDelegate engineDelegate;
@@ -150,10 +170,19 @@ class BuildSystemImpl : public BuildSystemCommandInterface {
   /// The build engine.
   BuildEngine buildEngine;
 
+  /// Mutex for access to execution queue.
+  std::mutex executionQueueMutex;
+
   /// The execution queue reference; this is only valid while a build is
   /// actually in progress.
   std::unique_ptr<BuildExecutionQueue> executionQueue;
 
+  /// Flag indicating if the build has been aborted.
+  bool buildWasAborted = false;
+
+  /// Flag indicating if the build has been cancelled.
+  std::atomic<bool> isCancelled_{ false };
+  
   /// @name BuildSystemCommandInterface Implementation
   /// @{
 
@@ -193,12 +222,9 @@ class BuildSystemImpl : public BuildSystemCommandInterface {
 
 public:
   BuildSystemImpl(class BuildSystem& buildSystem,
-                  BuildSystemDelegate& delegate,
-                  StringRef mainFilename)
+                  BuildSystemDelegate& delegate)
       : buildSystem(buildSystem), delegate(delegate),
-        mainFilename(mainFilename),
-        fileDelegate(*this), buildFile(mainFilename, fileDelegate),
-        engineDelegate(*this), buildEngine(engineDelegate),
+        fileDelegate(*this), engineDelegate(*this), buildEngine(engineDelegate),
         executionQueue() {}
 
   BuildSystem& getBuildSystem() {
@@ -209,6 +235,9 @@ public:
     return delegate;
   }
 
+  // FIXME: We should eliminate this, it isn't well formed when loading
+  // descriptions not from a file. We currently only use that for unit testing,
+  // though.
   StringRef getMainFilename() {
     return mainFilename;
   }
@@ -217,8 +246,9 @@ public:
     return *this;
   }
 
-  BuildFile& getBuildFile() {
-    return buildFile;
+  const BuildDescription& getBuildDescription() const {
+    assert(buildDescription);
+    return *buildDescription;
   }
 
   void error(StringRef filename, const Twine& message) {
@@ -244,6 +274,23 @@ public:
   /// @name Client API
   /// @{
 
+  bool loadDescription(StringRef filename) {
+    this->mainFilename = filename;
+
+    auto description = BuildFile(filename, fileDelegate).load();
+    if (!description) {
+      error(getMainFilename(), "unable to load build file");
+      return false;
+    }
+
+    buildDescription = std::move(description);
+    return true;
+  }
+
+  void loadDescription(std::unique_ptr<BuildDescription> description) {
+    buildDescription = std::move(description);
+  }
+
   bool attachDB(StringRef filename, std::string* error_out) {
     // FIXME: How do we pass the client schema version here, if we haven't
     // loaded the file yet.
@@ -253,15 +300,41 @@ public:
     if (!db)
       return false;
 
-    buildEngine.attachDB(std::move(db));
-    return true;
+    return buildEngine.attachDB(std::move(db), error_out);
   }
 
   bool enableTracing(StringRef filename, std::string* error_out) {
     return buildEngine.enableTracing(filename, error_out);
   }
 
+  /// Build the given key, and return the result and an indication of success.
+  llvm::Optional<BuildValue> build(BuildKey key);
+  
   bool build(StringRef target);
+
+  void setBuildWasAborted(bool value) {
+    buildWasAborted = value;
+  }
+
+  void resetForBuild() {
+    std::lock_guard<std::mutex> guard(executionQueueMutex);
+    isCancelled_ = false;
+  }
+
+  /// Cancel the running build.
+  void cancel() {
+    std::lock_guard<std::mutex> guard(executionQueueMutex);
+
+    isCancelled_ = true;
+    // Cancel jobs if we actually have a queue.
+    if (executionQueue.get() != nullptr)
+      getExecutionQueue().cancelAllJobs();
+  }
+
+  /// Check if the build has been cancelled.
+  bool isCancelled() {
+    return isCancelled_;
+  }
 
   /// @}
 };
@@ -321,6 +394,12 @@ class TargetTask : public Task {
   }
 
   virtual void inputsAvailable(BuildEngine& engine) override {
+    // If the build should cancel, do nothing.
+    if (getBuildSystem(engine).isCancelled()) {
+      engine.taskIsComplete(this, BuildValue::makeSkippedCommand().toData());
+      return;
+    }
+
     if (hasMissingInput) {
       // FIXME: Design the logging and status output APIs.
       auto& system = getBuildSystem(engine);
@@ -346,9 +425,10 @@ public:
   }
 };
 
-/// This is the task to "build" a node which represents pure raw input to the
-/// system.
-class InputNodeTask : public Task {
+
+/// This is the task to "build" a file node which represents pure raw input to
+/// the system.
+class FileInputNodeTask : public Task {
   BuildNode& node;
 
   virtual void start(BuildEngine& engine) override {
@@ -363,18 +443,14 @@ class InputNodeTask : public Task {
                             const ValueType& value) override {
   }
 
-  virtual void inputsAvailable(BuildEngine& engine) override {
-    // Handle virtual nodes.
-    if (node.isVirtual()) {
-      engine.taskIsComplete(
-          this, BuildValue::makeVirtualInput().toData());
-      return;
-    }
-    
+  virtual void inputsAvailable(BuildEngine& engine) override {    
+    // FIXME: We should do this work in the background.
+
     // Get the information on the file.
     //
     // FIXME: This needs to delegate, since we want to have a notion of
     // different node types.
+    assert(!node.isVirtual());
     auto info = node.getFileInfo(
         getBuildSystem(engine).getDelegate().getFileSystem());
     if (info.isMissing()) {
@@ -387,15 +463,13 @@ class InputNodeTask : public Task {
   }
 
 public:
-  InputNodeTask(BuildNode& node) : node(node) {}
+  FileInputNodeTask(BuildNode& node) : node(node) {
+    assert(!node.isVirtual());
+  }
 
   static bool isResultValid(BuildEngine& engine, const BuildNode& node,
                             const BuildValue& value) {
-    // Virtual input nodes are always valid unless the value type is wrong.
-    if (node.isVirtual())
-      return value.isVirtualInput();
-    
-    // The result is valid if the exists matches the value type and the file
+    // The result is valid if the existence matches the value type and the file
     // information remains the same.
     //
     // FIXME: This is inefficient, we will end up doing the stat twice, once
@@ -403,7 +477,11 @@ public:
     // output.
     //
     // We can solve this by caching ourselves but I wonder if it is something
-    // the engine should support more naturally.
+    // the engine should support more naturally. In practice, this is unlikely
+    // to be very performance critical in practice because this is only
+    // redundant in the case where we have never built the node before (or need
+    // to rebuild it), and thus the additional stat is only one small part of
+    // the work we need to perform.
     auto info = node.getFileInfo(
         getBuildSystem(engine).getDelegate().getFileSystem());
     if (info.isMissing()) {
@@ -411,6 +489,79 @@ public:
     } else {
       return value.isExistingInput() && value.getOutputInfo() == info;
     }
+  }
+};
+
+
+/// This is the task to "build" a directory node.
+///
+/// This node effectively just adapts a directory tree signature to a node. The
+/// reason why we need it (versus simply making the directory tree signature
+/// *be* this, is that we want the directory signature to be able to interface
+/// with other build nodes produced by commands).
+class DirectoryInputNodeTask : public Task {
+  BuildNode& node;
+
+  core::ValueType directorySignature;
+
+  virtual void start(BuildEngine& engine) override {
+    // Remove any trailing slash from the node name.
+    StringRef path =  node.getName();
+    if (path.endswith("/") && path != "/") {
+      path = path.substr(0, path.size() - 1);
+    }
+    engine.taskNeedsInput(
+        this, BuildKey::makeDirectoryTreeSignature(path).toData(),
+        /*inputID=*/0);
+  }
+
+  virtual void providePriorValue(BuildEngine&,
+                                 const ValueType& value) override {
+  }
+
+  virtual void provideValue(BuildEngine&, uintptr_t inputID,
+                            const ValueType& value) override {
+    directorySignature = value;
+  }
+
+  virtual void inputsAvailable(BuildEngine& engine) override {
+    // Simply propagate the value.
+    engine.taskIsComplete(this, ValueType(directorySignature));
+  }
+
+public:
+  DirectoryInputNodeTask(BuildNode& node) : node(node) {
+    assert(!node.isVirtual());
+  }
+};
+
+
+/// This is the task to build a virtual node which isn't connected to any
+/// output.
+class VirtualInputNodeTask : public Task {
+  virtual void start(BuildEngine& engine) override {
+  }
+
+  virtual void providePriorValue(BuildEngine&,
+                                 const ValueType& value) override {
+  }
+
+  virtual void provideValue(BuildEngine&, uintptr_t inputID,
+                            const ValueType& value) override {
+  }
+
+  virtual void inputsAvailable(BuildEngine& engine) override {
+    engine.taskIsComplete(
+        this, BuildValue::makeVirtualInput().toData());
+  }
+
+public:
+  VirtualInputNodeTask() {}
+
+  static bool isResultValid(BuildEngine& engine, const BuildNode& node,
+                            const BuildValue& value) {
+    // Virtual input nodes are always valid unless the value type is wrong.
+    return value.isVirtualInput();
   }
 };
 
@@ -468,6 +619,7 @@ class ProducedNodeTask : public Task {
 
   virtual void inputsAvailable(BuildEngine& engine) override {
     if (isInvalid) {
+      getBuildSystem(engine).getDelegate().hadCommandFailure();
       engine.taskIsComplete(this, BuildValue::makeFailedInput().toData());
       return;
     }
@@ -494,11 +646,232 @@ public:
   }
 };
 
+
+/// This task is responsible for computing the lists of files in directories.
+class DirectoryContentsTask : public Task {
+  std::string path;
+
+  /// The value for the input directory.
+  ValueType directoryValue;
+  
+  virtual void start(BuildEngine& engine) override {
+    // Request the base directory node -- this task doesn't actually use the
+    // value, but this connects the task to its producer if present.
+    engine.taskNeedsInput(
+        this, BuildKey::makeNode(path).toData(), /*inputID=*/0);
+  }
+
+  virtual void providePriorValue(BuildEngine&,
+                                 const ValueType& value) override {
+  }
+
+  virtual void provideValue(BuildEngine&, uintptr_t inputID,
+                            const ValueType& value) override {
+    if (inputID == 0) {
+      directoryValue = value;
+      return;
+    }
+  }
+
+  virtual void inputsAvailable(BuildEngine& engine) override {
+    // FIXME: We should do this work in the background.
+    
+    // Get the stat information on the directory.
+    //
+    // FIXME: We should probably be using the directory value here, but that
+    // requires reworking some of the value encoding for the directory.
+    auto info = getBuildSystem(engine).getDelegate().getFileSystem().getFileInfo(
+        path);
+    if (info.isMissing()) {
+      engine.taskIsComplete(
+          this, BuildValue::makeMissingInput().toData());
+      return;
+    }
+
+    // Get the list of files in the directory.
+    std::error_code ec;
+    std::vector<std::string> filenames;
+    for (auto it = llvm::sys::fs::directory_iterator(path, ec),
+           end = llvm::sys::fs::directory_iterator(); it != end;
+         it = it.increment(ec)) {
+      filenames.push_back(llvm::sys::path::filename(it->path()));
+    }
+
+    // Order the filenames.
+    std::sort(filenames.begin(), filenames.end(),
+              [](const std::string& a, const std::string& b) {
+                return a < b;
+              });
+
+    // Create the result.
+    engine.taskIsComplete(
+        this, BuildValue::makeDirectoryContents(info, filenames).toData());
+  }
+
+public:
+  DirectoryContentsTask(StringRef path) : path(path) {}
+
+  static bool isResultValid(BuildEngine& engine, StringRef path,
+                            const BuildValue& value) {
+    // The result is valid if the existence matches the existing value type, and
+    // the file information remains the same.
+    auto info = getBuildSystem(engine).getDelegate().getFileSystem().getFileInfo(
+        path);
+    if (info.isMissing()) {
+      return value.isMissingInput();
+    } else {
+      return value.isDirectoryContents() && value.getOutputInfo() == info;
+    }
+  }
+};
+
+
+
+/// This is the task to "build" a directory node which will encapsulate (via a
+/// signature) all of the contents of the directory, recursively.
+class DirectoryTreeSignatureTask : public Task {
+  // The basic algorithm we need to follow:
+  //
+  // 1. Get the directory contents.
+  // 2. Get the subpath directory info.
+  // 3. For each node input, if it is a directory, get the input node for it.
+  //
+  // FIXME: This algorithm currently does a redundant stat for each directory,
+  // because we stat it once to find out it is a directory, then again when we
+  // gather its contents (to use for validating the directory contents).
+  //
+  // FIXME: We need to fix the directory list to not get contents for symbolic
+  // links.
+
+  /// This structure encapsulates the information we need on each child.
+  struct SubpathInfo {
+    /// The filename;
+    std::string filename;
+    
+    /// The result of requesting the node at this subpath, once available.
+    ValueType value;
+
+    /// The directory signature, if needed.
+    llvm::Optional<ValueType> directorySignatureValue;
+  };
+  
+  /// The path we are taking the signature of.
+  std::string path;
+
+  /// The value for the directory itself.
+  ValueType directoryValue;
+
+  /// The accumulated list of child input info.
+  ///
+  /// Once we have the input directory information, we resize this to match the
+  /// number of children to avoid dynamically resizing it.
+  std::vector<SubpathInfo> childResults;
+  
+  virtual void start(BuildEngine& engine) override {
+    // Ask for the base directory directory contents.
+    engine.taskNeedsInput(
+        this, BuildKey::makeDirectoryContents(path).toData(),
+        /*inputID=*/0);
+  }
+
+  virtual void providePriorValue(BuildEngine&,
+                                 const ValueType& value) override {
+  }
+
+  virtual void provideValue(BuildEngine& engine, uintptr_t inputID,
+                            const ValueType& valueData) override {
+    // The first input is the directory contents.
+    if (inputID == 0) {
+      // Record the value for the directory.
+      directoryValue = valueData;
+
+      // Request the inputs for each subpath.
+      auto value = BuildValue::fromData(valueData);
+      if (value.isMissingInput())
+        return;
+
+      assert(value.isDirectoryContents());
+      auto filenames = value.getDirectoryContents();
+      for (size_t i = 0; i != filenames.size(); ++i) {
+        SmallString<256> childPath{ path };
+        llvm::sys::path::append(childPath, filenames[i]);
+        childResults.emplace_back(SubpathInfo{ filenames[i], {}, None });
+        engine.taskNeedsInput(this, BuildKey::makeNode(childPath).toData(),
+                              /*inputID=*/1 + i);
+      }
+      return;
+    }
+
+    // If the input is a child, add it to the collection and dispatch a
+    // directory request if needed.
+    if (inputID >= 1 && inputID < 1 + childResults.size()) {
+      auto index = inputID - 1;
+      auto& childResult = childResults[index];
+      childResult.value = valueData;
+
+      // If this node is a directory, request its signature recursively.
+      auto value = BuildValue::fromData(valueData);
+      if (value.isExistingInput()) {
+        if (value.getOutputInfo().isDirectory()) {
+          SmallString<256> childPath{ path };
+          llvm::sys::path::append(childPath, childResult.filename);
+        
+          engine.taskNeedsInput(
+              this, BuildKey::makeDirectoryTreeSignature(childPath).toData(),
+              /*inputID=*/1 + childResults.size() + index);
+        }
+      }
+      return;
+    }
+
+    // Otherwise, the input should be a directory signature.
+    auto index = inputID - 1 - childResults.size();
+    assert(index < childResults.size());
+    childResults[index].directorySignatureValue = valueData;
+  }
+
+  virtual void inputsAvailable(BuildEngine& engine) override {
+    // Compute the signature across all of the inputs.
+    using llvm::hash_combine;
+    llvm::hash_code code = hash_value(path);
+
+    // Add the signature for the actual input path.
+    code = hash_combine(
+        code, hash_combine_range(directoryValue.begin(), directoryValue.end()));
+
+    // For now, we represent this task as the aggregation of all the inputs.
+    for (const auto& info: childResults) {
+      // We merge the children by simply combining their encoded representation.
+      code = hash_combine(
+          code, hash_combine_range(info.value.begin(), info.value.end()));
+      if (info.directorySignatureValue.hasValue()) {
+        auto& data = info.directorySignatureValue.getValue();
+        code = hash_combine(
+            code, hash_combine_range(data.begin(), data.end()));
+      } else {
+        // Combine a random number to represent nil.
+        code = hash_combine(code, 0XC183979C3E98722E);
+      }
+    }
+    
+    // Compute the signature.
+    engine.taskIsComplete(this, BuildValue::makeDirectoryTreeSignature(
+                              uint64_t(code)).toData());
+  }
+
+public:
+  DirectoryTreeSignatureTask(StringRef path) : path(path) {}
+};
+
+
 /// This is the task to actually execute a command.
 class CommandTask : public Task {
   Command& command;
 
   virtual void start(BuildEngine& engine) override {
+    // Notify the client the command is preparing to run.
+    getBuildSystem(engine).getDelegate().commandPreparing(&command);
+
     command.start(getBuildSystem(engine).getCommandInterface(), this);
   }
 
@@ -517,7 +890,34 @@ class CommandTask : public Task {
   }
 
   virtual void inputsAvailable(BuildEngine& engine) override {
-    command.inputsAvailable(getBuildSystem(engine).getCommandInterface(), this);
+    auto& bsci = getBuildSystem(engine).getCommandInterface();
+    auto fn = [this, &bsci=bsci](QueueJobContext* context) {
+      // If the build should cancel, do nothing.
+      if (getBuildSystem(bsci.getBuildEngine()).isCancelled()) {
+        bsci.taskIsComplete(this, BuildValue::makeCancelledCommand());
+        return;
+      }
+
+      // Check if the command should be skipped.
+      if (!bsci.getDelegate().shouldCommandStart(&command)) {
+        // We need to call commandFinished here because commandPreparing and
+        // shouldCommandStart guarantee that they're followed by
+        // commandFinished.
+        bsci.getDelegate().commandFinished(&command, CommandResult::Skipped);
+        bsci.taskIsComplete(this, BuildValue::makeSkippedCommand());
+        return;
+      }
+    
+      // Execute the command, with notifications to the delegate.
+      auto result = command.execute(bsci, this, context);
+        
+      // Inform the engine of the result.
+      if (result.isFailedCommand()) {
+        bsci.getDelegate().hadCommandFailure();
+      }
+      bsci.taskIsComplete(this, std::move(result));
+    };
+    bsci.addJob({ &command, std::move(fn) });
   }
 
 public:
@@ -560,8 +960,8 @@ public:
   using Task::Task;
 };
 
-BuildFile& BuildSystemEngineDelegate::getBuildFile() {
-  return system.getBuildFile();
+const BuildDescription& BuildSystemEngineDelegate::getBuildDescription() const {
+  return system.getBuildDescription();
 }
 
 static BuildSystemDelegate::CommandStatusKind
@@ -588,8 +988,8 @@ Rule BuildSystemEngineDelegate::lookupRule(const KeyType& keyData) {
     
   case BuildKey::Kind::Command: {
     // Find the comand.
-    auto it = getBuildFile().getCommands().find(key.getCommandName());
-    if (it == getBuildFile().getCommands().end()) {
+    auto it = getBuildDescription().getCommands().find(key.getCommandName());
+    if (it == getBuildDescription().getCommands().end()) {
       // If there is no such command, produce an error task.
       return Rule{
         keyData,
@@ -630,7 +1030,7 @@ Rule BuildSystemEngineDelegate::lookupRule(const KeyType& keyData) {
     // FIXME: We should most likely have some kind of registration process so we
     // can do an efficient query here, but exactly how this should look isn't
     // clear yet.
-    for (const auto& it: getBuildFile().getTools()) {
+    for (const auto& it: getBuildDescription().getTools()) {
       auto result = it.second->createCustomCommand(key);
       if (!result) continue;
 
@@ -665,12 +1065,40 @@ Rule BuildSystemEngineDelegate::lookupRule(const KeyType& keyData) {
       }
     };
   }
+
+  case BuildKey::Kind::DirectoryContents: {
+    std::string path = key.getDirectoryContentsPath();
+    return Rule{
+      keyData,
+      /*Action=*/ [path](BuildEngine& engine) -> Task* {
+        return engine.registerTask(new DirectoryContentsTask(path));
+      },
+      /*IsValid=*/ [path](BuildEngine& engine, const Rule& rule,
+                          const ValueType& value) -> bool {
+        return DirectoryContentsTask::isResultValid(
+            engine, path, BuildValue::fromData(value));
+      }
+    };
+  }
+
+  case BuildKey::Kind::DirectoryTreeSignature: {
+    std::string path = key.getDirectoryTreeSignaturePath();
+    return Rule{
+      keyData,
+      /*Action=*/ [path](BuildEngine& engine) -> Task* {
+        return engine.registerTask(new DirectoryTreeSignatureTask(path));
+      },
+        // Directory signatures don't require any validation outside of their
+        // concrete dependencies.
+      /*IsValid=*/ nullptr
+    };
+  }
     
   case BuildKey::Kind::Node: {
     // Find the node.
-    auto it = getBuildFile().getNodes().find(key.getNodeName());
+    auto it = getBuildDescription().getNodes().find(key.getNodeName());
     BuildNode* node;
-    if (it != getBuildFile().getNodes().end()) {
+    if (it != getBuildDescription().getNodes().end()) {
       node = static_cast<BuildNode*>(it->second.get());
     } else {
       auto it = dynamicNodes.find(key.getNodeName());
@@ -694,14 +1122,40 @@ Rule BuildSystemEngineDelegate::lookupRule(const KeyType& keyData) {
 
     // Create an input node if there are no producers.
     if (node->getProducers().empty()) {
+      if (node->isVirtual()) {
+        return Rule{
+          keyData,
+          /*Action=*/ [node](BuildEngine& engine) -> Task* {
+            return engine.registerTask(new VirtualInputNodeTask());
+          },
+          /*IsValid=*/ [node](BuildEngine& engine, const Rule& rule,
+                                const ValueType& value) -> bool {
+            return VirtualInputNodeTask::isResultValid(
+                engine, *node, BuildValue::fromData(value));
+          }
+        };
+      }
+
+      if (node->isDirectory()) {
+        return Rule{
+          keyData,
+            /*Action=*/ [node](BuildEngine& engine) -> Task* {
+            return engine.registerTask(new DirectoryInputNodeTask(*node));
+          },
+            // Directory nodes don't require any validation outside of their
+            // concrete dependencies.
+          /*IsValid=*/ nullptr
+        };
+      }
+      
       return Rule{
         keyData,
         /*Action=*/ [node](BuildEngine& engine) -> Task* {
-          return engine.registerTask(new InputNodeTask(*node));
+          return engine.registerTask(new FileInputNodeTask(*node));
         },
         /*IsValid=*/ [node](BuildEngine& engine, const Rule& rule,
                             const ValueType& value) -> bool {
-          return InputNodeTask::isResultValid(
+          return FileInputNodeTask::isResultValid(
               engine, *node, BuildValue::fromData(value));
         }
       };
@@ -723,8 +1177,8 @@ Rule BuildSystemEngineDelegate::lookupRule(const KeyType& keyData) {
 
   case BuildKey::Kind::Target: {
     // Find the target.
-    auto it = getBuildFile().getTargets().find(key.getTargetName());
-    if (it == getBuildFile().getTargets().end()) {
+    auto it = getBuildDescription().getTargets().find(key.getTargetName());
+    if (it == getBuildDescription().getTargets().end()) {
       // FIXME: Invalid target name, produce an error.
       assert(0 && "FIXME: invalid target");
       abort();
@@ -751,73 +1205,44 @@ Rule BuildSystemEngineDelegate::lookupRule(const KeyType& keyData) {
 }
 
 void BuildSystemEngineDelegate::cycleDetected(const std::vector<Rule*>& cycle) {
-  // Compute a description of the cycle path.
-  SmallString<256> message;
-  llvm::raw_svector_ostream os(message);
-  os << "cycle detected while building: ";
-  bool first = true;
-  for (const auto* rule: cycle) {
-    if (!first)
-      os << " -> ";
+  // Track that the build has been aborted.
+  getBuildSystem().setBuildWasAborted(true);
+  static_cast<BuildSystemFrontendDelegate*>(&getBuildSystem().getDelegate())->cycleDetected(cycle);
+}
 
-    // Convert to a build key.
-    auto key = BuildKey::fromData(rule->key);
-    switch (key.getKind()) {
-    case BuildKey::Kind::Unknown:
-      os << "((unknown))";
-      break;
-    case BuildKey::Kind::Command:
-      os << "command '" << key.getCommandName() << "'";
-      break;
-    case BuildKey::Kind::CustomTask:
-      os << "custom task '" << key.getCustomTaskName() << "'";
-      break;
-    case BuildKey::Kind::Node:
-      os << "node '" << key.getNodeName() << "'";
-      break;
-    case BuildKey::Kind::Target:
-      os << "target '" << key.getTargetName() << "'";
-      break;
-    }
-    first = false;
-  }
-  
-  system.error(system.getMainFilename(), os.str());
+void BuildSystemEngineDelegate::error(const Twine& message) {
+  system.error(system.getMainFilename(), message);
 }
 
 #pragma mark - BuildSystemImpl implementation
 
 std::unique_ptr<BuildNode>
 BuildSystemImpl::lookupNode(StringRef name, bool isImplicit) {
+  bool isDirectory = name.endswith("/");
   bool isVirtual = !name.empty() && name[0] == '<' && name.back() == '>';
-  return llvm::make_unique<BuildNode>(name, isVirtual);
+  return llvm::make_unique<BuildNode>(name, isDirectory, isVirtual,
+                                      /*isCommandTimestamp=*/false,
+                                      /*isMutable=*/false);
 }
 
-bool BuildSystemImpl::build(StringRef target) {
-  // Load the build file.
-  //
-  // FIXME: Eventually, we may want to support something fancier where we load
-  // the build file in the background so we can immediately start building
-  // things as they show up.
-  //
-  // FIXME: We need to load this only once.
-  if (!getBuildFile().load()) {
-    error(getMainFilename(), "unable to load build file");
-    return false;
-  }    
+llvm::Optional<BuildValue> BuildSystemImpl::build(BuildKey key) {
 
-  // Create the execution queue.
-  executionQueue = delegate.createExecutionQueue();
+  // Aquire lock and create execution queue.
+  {
+    std::lock_guard<std::mutex> guard(executionQueueMutex);
 
-  // If target name is not passed then we try to load the default target name
-  // from manifest file
-  if (target.empty()) {
-    target = getBuildFile().getDefaultTarget();
+    // If we were cancelled, return.
+    if (isCancelled()) {
+      return None;
+    }
+
+    executionQueue = delegate.createExecutionQueue();
   }
 
   // Build the target.
-  getBuildEngine().build(BuildKey::makeTarget(target).toData());
-
+  buildWasAborted = false;
+  auto result = getBuildEngine().build(key.toData());
+    
   // Release the execution queue, impicitly waiting for it to complete. The
   // asynchronous nature of the engine callbacks means it is possible for the
   // queue to have notified the engine of the last task completion, but still
@@ -825,7 +1250,25 @@ bool BuildSystemImpl::build(StringRef target) {
   // completion).
   executionQueue.reset();
 
-  return true;
+  if (buildWasAborted)
+    return None;
+  return BuildValue::fromData(result);
+}
+
+bool BuildSystemImpl::build(StringRef target) {
+  // The build description must have been loaded.
+  if (!buildDescription) {
+    error(getMainFilename(), "no build description loaded");
+    return false;
+  }
+
+  // If target name is not passed then we try to load the default target name
+  // from manifest file
+  if (target.empty()) {
+    target = getBuildDescription().getDefaultTarget();
+  }
+
+  return build(BuildKey::makeTarget(target)).hasValue();
 }
 
 #pragma mark - PhonyTool implementation
@@ -844,11 +1287,11 @@ public:
     llvm::raw_svector_ostream(result) << getName();
   }
 
-  virtual bool executeExternalCommand(BuildSystemCommandInterface& bsci,
-                                      Task* task,
-                                      QueueJobContext* context) override {
+  virtual CommandResult executeExternalCommand(BuildSystemCommandInterface& bsci,
+                                               Task* task,
+                                               QueueJobContext* context) override {
     // Nothing needs to be done for phony commands.
-    return true;
+    return CommandResult::Succeeded;
   }
 };
 
@@ -899,18 +1342,28 @@ class ShellCommand : public ExternalCommand {
   };
   
   /// The command line arguments.
-  std::vector<std::string> args;
+  std::vector<StringRef> args;
 
   /// The environment to use. If empty, the environment will be inherited.
-  llvm::StringMap<std::string> env;
+  SmallVector<std::pair<StringRef, StringRef>, 1> env;
   
   /// The path to the dependency output file, if used.
   SmallVector<std::string, 1> depsPaths{};
 
   /// The style of dependencies used.
   DepsStyle depsStyle = DepsStyle::Unused;
+
+  /// Whether to inherit the base environment.
+  bool inheritEnv = true;
+
+  /// The cached signature, once computed -- 0 is used as a sentinel value.
+  std::atomic<uint64_t> cachedSignature{ 0 };
   
   virtual uint64_t getSignature() override {
+    uint64_t signature = cachedSignature;
+    if (signature != 0)
+      return signature;
+      
     // FIXME: Use a more appropriate hashing infrastructure.
     using llvm::hash_combine;
     llvm::hash_code code = ExternalCommand::getSignature();
@@ -918,14 +1371,20 @@ class ShellCommand : public ExternalCommand {
       code = hash_combine(code, arg);
     }
     for (const auto& entry: env) {
-      code = hash_combine(code, entry.getKey());
-      code = hash_combine(code, entry.getValue());
+      code = hash_combine(code, entry.first);
+      code = hash_combine(code, entry.second);
     }
     for (const auto& path: depsPaths) {
       code = hash_combine(code, path);
     }
     code = hash_combine(code, int(depsStyle));
-    return size_t(code);
+    code = hash_combine(code, int(inheritEnv));
+    signature = size_t(code);
+    if (signature == 0) {
+      signature = 1;
+    }
+    cachedSignature = signature;
+    return signature;
   }
 
   bool processDiscoveredDependencies(BuildSystemCommandInterface& bsci,
@@ -1082,9 +1541,9 @@ public:
       // When provided as a scalar string, we default to executing using the
       // shell.
       args.clear();
-      args.push_back("/bin/sh");
-      args.push_back("-c");
-      args.push_back(value);
+      args.push_back(ctx.getDelegate().getInternedString("/bin/sh"));
+      args.push_back(ctx.getDelegate().getInternedString("-c"));
+      args.push_back(ctx.getDelegate().getInternedString(value));
     } else if (name == "deps") {
       depsPaths.clear();
       depsPaths.emplace_back(value);
@@ -1098,6 +1557,13 @@ public:
         return false;
       }
       return true;
+    } else if (name == "inherit-env") {
+      if (value != "true" && value != "false") {
+        ctx.error("invalid value: '" + value + "' for attribute '" +
+                  name + "'");
+        return false;
+      }
+      inheritEnv = value == "true";
     } else {
       return ExternalCommand::configureAttribute(ctx, name, value);
     }
@@ -1113,8 +1579,12 @@ public:
         ctx.error("invalid arguments for command '" + getName() + "'");
         return false;
       }
-      
-      args = std::vector<std::string>(values.begin(), values.end());
+
+      args.clear();
+      args.reserve(values.size());
+      for (auto arg: values) {
+        args.emplace_back(ctx.getDelegate().getInternedString(arg));
+      }
     } else if (name == "deps") {
       depsPaths.clear();
       depsPaths.insert(depsPaths.begin(), values.begin(), values.end());
@@ -1130,8 +1600,12 @@ public:
       ArrayRef<std::pair<StringRef, StringRef>> values) override {
     if (name == "env") {
       env.clear();
+      env.reserve(values.size());
       for (const auto& entry: values) {
-        env[entry.first] = entry.second;
+        env.emplace_back(
+            std::make_pair(
+                ctx.getDelegate().getInternedString(entry.first),
+                ctx.getDelegate().getInternedString(entry.second)));
       }
     } else {
       return ExternalCommand::configureAttribute(ctx, name, values);
@@ -1140,20 +1614,17 @@ public:
     return true;
   }
 
-  virtual bool executeExternalCommand(BuildSystemCommandInterface& bsci,
-                                      Task* task,
-                                      QueueJobContext* context) override {
-    std::vector<std::pair<StringRef, StringRef>> environment;
-    for (const auto& it: env) {
-      environment.push_back({ it.getKey(), it.getValue() });
-    }
-    
+  virtual CommandResult executeExternalCommand(BuildSystemCommandInterface& bsci,
+                                               Task* task,
+                                               QueueJobContext* context) override {
     // Execute the command.
-    if (!bsci.getExecutionQueue().executeProcess(
-            context, std::vector<StringRef>(args.begin(), args.end()),
-            environment)) {
+    auto result = bsci.getExecutionQueue().executeProcess(
+        context, args,
+        env, /*inheritEnvironment=*/inheritEnv);
+
+    if (result != CommandResult::Succeeded) {
       // If the command failed, there is no need to gather dependencies.
-      return false;
+      return result;
     }
     
     // Collect the discovered dependencies, if used.
@@ -1161,11 +1632,11 @@ public:
       if (!processDiscoveredDependencies(bsci, task, context)) {
         // If we were unable to process the dependencies output, report a
         // failure.
-        return false;
+        return CommandResult::Failed;
       }
     }
     
-    return true;
+    return result;
   }
 };
 
@@ -1202,7 +1673,7 @@ public:
 
 class ClangShellCommand : public ExternalCommand {
   /// The compiler command to invoke.
-  std::vector<std::string> args;
+  std::vector<StringRef> args;
   
   /// The path to the dependency output file, if used.
   std::string depsPath;
@@ -1289,9 +1760,9 @@ public:
       // When provided as a scalar string, we default to executing using the
       // shell.
       args.clear();
-      args.push_back("/bin/sh");
-      args.push_back("-c");
-      args.push_back(value);
+      args.push_back(ctx.getDelegate().getInternedString("/bin/sh"));
+      args.push_back(ctx.getDelegate().getInternedString("-c"));
+      args.push_back(ctx.getDelegate().getInternedString(value));
     } else if (name == "deps") {
       depsPath = value;
     } else {
@@ -1303,7 +1774,11 @@ public:
   virtual bool configureAttribute(const ConfigureContext& ctx, StringRef name,
                                   ArrayRef<StringRef> values) override {
     if (name == "args") {
-      args = std::vector<std::string>(values.begin(), values.end());
+      args.clear();
+      args.reserve(values.size());
+      for (auto arg: values) {
+        args.emplace_back(ctx.getDelegate().getInternedString(arg));
+      }
     } else {
         return ExternalCommand::configureAttribute(ctx, name, values);
     }
@@ -1316,18 +1791,15 @@ public:
     return ExternalCommand::configureAttribute(ctx, name, values);
   }
 
-  virtual bool executeExternalCommand(BuildSystemCommandInterface& bsci,
-                                      Task* task,
-                                      QueueJobContext* context) override {
-    std::vector<StringRef> commandLine;
-    for (const auto& arg: args) {
-      commandLine.push_back(arg);
-    }
-
+  virtual CommandResult executeExternalCommand(BuildSystemCommandInterface& bsci,
+                                               Task* task,
+                                               QueueJobContext* context) override {
     // Execute the command.
-    if (!bsci.getExecutionQueue().executeProcess(context, commandLine)) {
+    auto result = bsci.getExecutionQueue().executeProcess(context, args);
+
+    if (result != CommandResult::Succeeded) {
       // If the command failed, there is no need to gather dependencies.
-      return false;
+      return result;
     }
 
     // Otherwise, collect the discovered dependencies, if used.
@@ -1335,11 +1807,11 @@ public:
       if (!processDiscoveredDependencies(bsci, task, context)) {
         // If we were unable to process the dependencies output, report a
         // failure.
-        return false;
+        return CommandResult::Failed;
       }
     }
 
-    return true;
+    return result;
   }
 };
 
@@ -1374,88 +1846,20 @@ public:
 
 #pragma mark - MkdirTool implementation
 
-class MkdirCommand : public Command {
-  BuildNode* output = nullptr;
-
-  /// The command description.
-  //
-  // FIXME: This seems wasteful.
-  std::string description;
-
-  virtual uint64_t getSignature() {
-    return basic::hashString(output->getName());
-  }
-
-  virtual void configureDescription(const ConfigureContext&,
-                                    StringRef value) override {
-    description = value;
-  }
-
+class MkdirCommand : public ExternalCommand {
   virtual void getShortDescription(SmallVectorImpl<char> &result) override {
-    llvm::raw_svector_ostream(result) << description;
+    llvm::raw_svector_ostream(result) << getDescription();
   }
 
   virtual void getVerboseDescription(SmallVectorImpl<char> &result) override {
     llvm::raw_svector_ostream os(result);
     os << "mkdir -p ";
     // FIXME: This isn't correct, we need utilities for doing shell quoting.
-    if (StringRef(output->getName()).find(' ') != StringRef::npos) {
-      os << '"' << output->getName() << '"';
+    if (StringRef(getOutputs()[0]->getName()).find(' ') != StringRef::npos) {
+      os << '"' << getOutputs()[0]->getName() << '"';
     } else {
-      os << output->getName();
+      os << getOutputs()[0]->getName();
     }
-  }
-  
-  virtual void configureInputs(const ConfigureContext& ctx,
-                               const std::vector<Node*>& value) override {
-    ctx.error("unexpected explicit input: '" + value[0]->getName() + "'");
-  }
-
-  virtual void configureOutputs(const ConfigureContext& ctx,
-                                const std::vector<Node*>& value) override {
-    if (value.size() == 1) {
-      output = static_cast<BuildNode*>(value[0]);
-      if (output->isVirtual()) {
-        ctx.error("unexpected virtual output");
-      }
-    } else if (value.empty()) {
-      ctx.error("missing declared output");
-    } else {
-      ctx.error("unexpected explicit output: '" + value[1]->getName() + "'");
-    }
-  }
-  
-  virtual bool configureAttribute(const ConfigureContext& ctx, StringRef name,
-                                  StringRef value) override {
-    // No supported attributes.
-    ctx.error("unexpected attribute: '" + name + "'");
-    return false;
-  }
-  virtual bool configureAttribute(const ConfigureContext& ctx, StringRef name,
-                                  ArrayRef<StringRef> values) override {
-    // No supported attributes.
-    ctx.error("unexpected attribute: '" + name + "'");
-    return false;
-  }
-  virtual bool configureAttribute(
-      const ConfigureContext& ctx, StringRef name,
-      ArrayRef<std::pair<StringRef, StringRef>> values) override {
-    // No supported attributes.
-    ctx.error("unexpected attribute: '" + name + "'");
-    return false;
-  }
-
-  virtual BuildValue getResultForOutput(Node* node,
-                                        const BuildValue& value) override {
-    // If the value was a failed or skipped command, propagate the failure.
-    if (value.isFailedCommand() || value.isSkippedCommand())
-      return BuildValue::makeFailedInput();
-
-    // Otherwise, we should have a successful command -- return the actual
-    // result for the output.
-    assert(value.isSuccessfulCommand());
-
-    return BuildValue::makeExistingInput(value.getOutputInfo());
   }
 
   virtual bool isResultValid(BuildSystem& system,
@@ -1465,7 +1869,8 @@ class MkdirCommand : public Command {
       return false;
 
     // Otherwise, the result is valid if the directory still exists.
-    auto info = output->getFileInfo(system.getDelegate().getFileSystem());
+    auto info = getOutputs()[0]->getFileInfo(
+        system.getDelegate().getFileSystem());
     if (info.isMissing())
       return false;
 
@@ -1483,76 +1888,21 @@ class MkdirCommand : public Command {
     return true;
   }
   
-  virtual void start(BuildSystemCommandInterface& bsci,
-                     core::Task* task) override {
-    // Notify the client the command is preparing to run.
-    bsci.getDelegate().commandPreparing(this);
-
-    // Eventually we would like to use the system itself to manage recursive
-    // directory creation.
-  }
-
-  virtual void providePriorValue(BuildSystemCommandInterface&, core::Task*,
-                                 const BuildValue& value) override {
-    // Ignored.
-  }
-
-  virtual void provideValue(BuildSystemCommandInterface&, core::Task*,
-                            uintptr_t inputID,
-                            const BuildValue& value) override {
-    assert(0 && "unexpected API call");
-  }
-
-  virtual void inputsAvailable(BuildSystemCommandInterface& bsci,
-                               core::Task* task) override {
-    // If the build should cancel, do nothing.
-    if (bsci.getDelegate().isCancelled()) {
-      bsci.taskIsComplete(task, BuildValue::makeSkippedCommand());
-      return;
+  virtual CommandResult executeExternalCommand(BuildSystemCommandInterface& bsci,
+                                               Task* task,
+                                               QueueJobContext* context) override {
+    auto output = getOutputs()[0];
+    if (!bsci.getDelegate().getFileSystem().createDirectories(
+            output->getName())) {
+      getBuildSystem(bsci.getBuildEngine()).error(
+          "", "unable to create directory '" + output->getName() + "'");
+      return CommandResult::Failed;
     }
-    
-    auto fn = [this, &bsci=bsci, task](QueueJobContext* context) {
-      // Notify the client the actual command body is going to run.
-      bsci.getDelegate().commandStarted(this);
-      
-      // Create the directory.
-      //
-      // FIXME: Need to use the filesystem interfaces.
-      auto success = true;
-      if (llvm::sys::fs::create_directories(output->getName())) {
-        getBuildSystem(bsci.getBuildEngine()).error(
-            "", "unable to create directory '" + output->getName() + "'");
-        success = false;
-      }
-      
-      // FIXME: On failure, should try to unlink the output if it exists, and
-      // retry.
-      
-      // Notify the client the command is complete.
-      bsci.getDelegate().commandFinished(this);
-    
-      // Process the result.
-      if (!success) {
-        bsci.getDelegate().hadCommandFailure();
-        bsci.taskIsComplete(task, BuildValue::makeFailedCommand());
-        return;
-      }
-
-      // Capture the file information of the output.
-      //
-      // FIXME: This isn't really right, \see isResultValid().
-      FileInfo outputInfo = output->getFileInfo(
-          bsci.getDelegate().getFileSystem());
-      
-      // Complete with a successful result.
-      bsci.taskIsComplete(
-          task, BuildValue::makeSuccessfulCommand(outputInfo, getSignature()));
-    };
-    bsci.addJob({ this, std::move(fn) });
+    return CommandResult::Succeeded;
   }
-
+  
 public:
-  using Command::Command;
+  using ExternalCommand::ExternalCommand;
 };
 
 class MkdirTool : public Tool {
@@ -1587,16 +1937,36 @@ public:
 #pragma mark - SymlinkTool implementation
 
 class SymlinkCommand : public Command {
+  /// The declared output node.
   BuildNode* output = nullptr;
 
+  /// The path of the actual symbolic link to create, if different from the
+  /// output node.
+  std::string linkOutputPath;
+  
   /// The command description.
   std::string description;
+
+  /// Declared command inputs, used only for ordering purposes.
+  std::vector<BuildNode*> inputs;
 
   /// The contents to write at the output path.
   std::string contents;
 
+  /// Get the destination path.
+  StringRef getActualOutputPath() const {
+    return linkOutputPath.empty() ? output->getName() :
+      StringRef(linkOutputPath);
+  }
+  
   virtual uint64_t getSignature() {
-    return basic::hashString(output->getName()) ^ basic::hashString(contents);
+    using llvm::hash_combine;
+    llvm::hash_code code = hash_value(output->getName());
+    code = hash_combine(code, contents);
+    for (const auto* input: inputs) {
+      code = hash_combine(code, input->getName());
+    }
+    return size_t(code);
   }
 
   virtual void configureDescription(const ConfigureContext&,
@@ -1611,26 +1981,38 @@ class SymlinkCommand : public Command {
   virtual void getVerboseDescription(SmallVectorImpl<char> &result) override {
     llvm::raw_svector_ostream os(result);
     os << "ln -sfh ";
-    // FIXME: This isn't correct, we need utilities for doing shell quoting.
-    if (StringRef(output->getName()).find(' ') != StringRef::npos) {
-      os << '"' << output->getName() << '"';
+    StringRef outputPath = getActualOutputPath();
+    if (!output || !outputPath.empty()) {
+      // FIXME: This isn't correct, we need utilities for doing shell quoting.
+      if (outputPath.find(' ') != StringRef::npos) {
+        os << '"' << outputPath << '"';
+      } else {
+        os << outputPath;
+      }
     } else {
-      os << output->getName();
+      os << "<<<missing output>>>";
+    }
+    os << ' ';
+    // FIXME: This isn't correct, we need utilities for doing shell quoting.
+    if (StringRef(contents).find(' ') != StringRef::npos) {
+      os << '"' << contents << '"';
+    } else {
+      os << contents;
     }
   }
   
   virtual void configureInputs(const ConfigureContext& ctx,
                                const std::vector<Node*>& value) override {
-    ctx.error("unexpected explicit input: '" + value[0]->getName() + "'");
+    inputs.reserve(value.size());
+    for (auto* node: value) {
+      inputs.emplace_back(static_cast<BuildNode*>(node));
+    }
   }
 
   virtual void configureOutputs(const ConfigureContext& ctx,
                                 const std::vector<Node*>& value) override {
     if (value.size() == 1) {
       output = static_cast<BuildNode*>(value[0]);
-      if (output->isVirtual()) {
-        ctx.error("unexpected virtual output");
-      }
     } else if (value.empty()) {
       ctx.error("missing declared output");
     } else {
@@ -1642,6 +2024,9 @@ class SymlinkCommand : public Command {
                                   StringRef value) override {
     if (name == "contents") {
       contents = value;
+      return true;
+    } else if (name == "link-output-path") {
+      linkOutputPath = value;
       return true;
     } else {
       ctx.error("unexpected attribute: '" + name + "'");
@@ -1664,9 +2049,12 @@ class SymlinkCommand : public Command {
 
   virtual BuildValue getResultForOutput(Node* node,
                                         const BuildValue& value) override {
-    // If the value was a failed or skipped command, propagate the failure.
-    if (value.isFailedCommand() || value.isSkippedCommand())
+    // If the value was a failed command, propagate the failure.
+    if (value.isFailedCommand() || value.isPropagatedFailureCommand() ||
+        value.isCancelledCommand())
       return BuildValue::makeFailedInput();
+    if (value.isSkippedCommand())
+      return BuildValue::makeSkippedCommand();
 
     // Otherwise, we should have a successful command -- return the actual
     // result for the output.
@@ -1677,13 +2065,26 @@ class SymlinkCommand : public Command {
 
   virtual bool isResultValid(BuildSystem& system,
                              const BuildValue& value) override {
+    // It is an error if this command isn't configured properly.
+    StringRef outputPath = getActualOutputPath();
+    if (!output || outputPath.empty())
+      return false;
+
     // If the prior value wasn't for a successful command, recompute.
     if (!value.isSuccessfulCommand())
+      return false;
+    
+    // If the command's signature has changed since it was built, rebuild.
+    if (value.getCommandSignature() != getSignature())
+      return false;
+
+    // If the prior command doesn't look like one for a link, recompute.
+    if (value.getNumOutputs() != 1)
       return false;
 
     // Otherwise, assume the result is valid if its link status matches the
     // previous one.
-    auto info = output->getLinkInfo(system.getDelegate().getFileSystem());
+    auto info = system.getDelegate().getFileSystem().getLinkInfo(outputPath);
     if (info.isMissing())
       return false;
 
@@ -1692,8 +2093,14 @@ class SymlinkCommand : public Command {
   
   virtual void start(BuildSystemCommandInterface& bsci,
                      core::Task* task) override {
-    // Notify the client the command is preparing to run.
-    bsci.getDelegate().commandPreparing(this);
+    // The command itself takes no inputs, so just treat any declared inputs as
+    // "must follow" directives.
+    //
+    // FIXME: We should make this explicit once we have actual support for must
+    // follow inputs.
+    for (auto it = inputs.begin(), ie = inputs.end(); it != ie; ++it) {
+      bsci.taskMustFollow(task, BuildKey::makeNode(*it));
+    }
   }
 
   virtual void providePriorValue(BuildSystemCommandInterface&, core::Task*,
@@ -1707,65 +2114,54 @@ class SymlinkCommand : public Command {
     assert(0 && "unexpected API call");
   }
 
-  virtual void inputsAvailable(BuildSystemCommandInterface& bsci,
-                               core::Task* task) override {
-    // If the build should cancel, do nothing.
-    if (bsci.getDelegate().isCancelled()) {
-      bsci.taskIsComplete(task, BuildValue::makeSkippedCommand());
-      return;
+  virtual BuildValue execute(BuildSystemCommandInterface& bsci,
+                             core::Task* task,
+                             QueueJobContext* context) override {
+    // It is an error if this command isn't configured properly.
+    StringRef outputPath = getActualOutputPath();
+    if (!output || outputPath.empty()) {
+      return BuildValue::makeFailedCommand();
     }
-    
-    auto fn = [this, &bsci=bsci, task](QueueJobContext* context) {
-      // Notify the client the actual command body is going to run.
-      bsci.getDelegate().commandStarted(this);
 
-      // Create the directory containing the symlink, if necessary.
-      //
-      // FIXME: Shared behavior with ExternalCommand.
-      //
-      // FIXME: Need to use the filesystem interfaces.
-      {
-        auto parent = llvm::sys::path::parent_path(output->getName());
-        if (!parent.empty()) {
-          (void) llvm::sys::fs::create_directories(parent);
-        }
+    // Create the directory containing the symlink, if necessary.
+    //
+    // FIXME: Shared behavior with ExternalCommand.
+    {
+      auto parent = llvm::sys::path::parent_path(outputPath);
+      if (!parent.empty()) {
+        (void) bsci.getDelegate().getFileSystem().createDirectories(parent);
       }
+    }
 
-      // Create the symbolic link (note that despite the poorly chosen LLVM
-      // name, this is a symlink).
-      //
-      // FIXME: Need to use the filesystem interfaces.
-      auto success = true;
-      if (llvm::sys::fs::create_link(contents, output->getName())) {
-        // On failure, we attempt to unlink the file and retry.
-        ::unlink(output->getName().str().c_str());
+    // Create the symbolic link (note that despite the poorly chosen LLVM
+    // name, this is a symlink).
+    //
+    // FIXME: Need to use the filesystem interfaces.
+    bsci.getDelegate().commandStarted(this);
+    auto success = true;
+    if (llvm::sys::fs::create_link(contents, outputPath)) {
+      // On failure, we attempt to unlink the file and retry.
+      basic::sys::unlink(outputPath.str().c_str());
         
-        if (llvm::sys::fs::create_link(contents, output->getName())) {
-          getBuildSystem(bsci.getBuildEngine()).error(
-              "", "unable to create symlink at '" + output->getName() + "'");
-          success = false;
-        }
+      if (llvm::sys::fs::create_link(contents, outputPath)) {
+        getBuildSystem(bsci.getBuildEngine()).error(
+            "", "unable to create symlink at '" + outputPath + "'");
+        success = false;
       }
-      
-      // Notify the client the command is complete.
-      bsci.getDelegate().commandFinished(this);
+    }
+    bsci.getDelegate().commandFinished(this, success ? CommandResult::Succeeded : CommandResult::Failed);
     
-      // Process the result.
-      if (!success) {
-        bsci.getDelegate().hadCommandFailure();
-        bsci.taskIsComplete(task, BuildValue::makeFailedCommand());
-        return;
-      }
+    // Process the result.
+    if (!success) {
+      return BuildValue::makeFailedCommand();
+    }
 
-      // Capture the *link* information of the output.
-      FileInfo outputInfo = output->getLinkInfo(
-          bsci.getDelegate().getFileSystem());
+    // Capture the *link* information of the output.
+    FileInfo outputInfo = bsci.getDelegate().getFileSystem().getLinkInfo(
+        outputPath);
       
-      // Complete with a successful result.
-      bsci.taskIsComplete(
-          task, BuildValue::makeSuccessfulCommand(outputInfo, getSignature()));
-    };
-    bsci.addJob({ this, std::move(fn) });
+    // Complete with a successful result.
+    return BuildValue::makeSuccessfulCommand(outputInfo, getSignature());
   }
 
 public:
@@ -1808,30 +2204,27 @@ class ArchiveShellCommand : public ExternalCommand {
   std::string archiveName;
   std::vector<std::string> archiveInputs;
 
-  virtual bool executeExternalCommand(BuildSystemCommandInterface& bsci,
-                                      Task* task,
-                                      QueueJobContext* context) override {
+  virtual CommandResult executeExternalCommand(BuildSystemCommandInterface& bsci,
+                                               Task* task,
+                                               QueueJobContext* context) override {
     // First delete the current archive
     // TODO instead insert, update and remove files from the archive
     if (llvm::sys::fs::remove(archiveName, /*IgnoreNonExisting*/ true)) {
-      return false;
+      return CommandResult::Failed;
     }
 
     // Create archive
     auto args = getArgs();
-    if (!bsci.getExecutionQueue().executeProcess(context, std::vector<StringRef>(args.begin(), args.end()))) {
-      return false;
-    }
-
-    return true;
+    return bsci.getExecutionQueue().executeProcess(
+        context, std::vector<StringRef>(args.begin(), args.end()));
   }
 
   virtual void getShortDescription(SmallVectorImpl<char> &result) override {
-    auto desc = getDescription();
-    if (desc.empty()) {
-      desc = "Archiving " + archiveName;
+    if (getDescription().empty()) {
+      llvm::raw_svector_ostream(result) << "Archiving " + archiveName;
+    } else {
+      llvm::raw_svector_ostream(result) << getDescription();
     }
-    llvm::raw_svector_ostream(result) << desc;
   }
 
   virtual void getVerboseDescription(SmallVectorImpl<char> &result) override {
@@ -1920,6 +2313,221 @@ public:
   }
 };
 
+#pragma mark - StaleFileRemovalTool implementation
+
+class StaleFileRemovalCommand : public Command {
+  std::string description;
+
+  std::vector<std::string> expectedOutputs;
+  std::vector<std::string> filesToDelete;
+  std::vector<std::string> roots;
+  bool computedFilesToDelete = false;
+
+  BuildValue priorValue;
+  bool hasPriorResult = false;
+
+  char path_separator = llvm::sys::path::get_separator()[0];
+
+  virtual void configureDescription(const ConfigureContext&, StringRef value) override {
+    description = value;
+  }
+
+  virtual void getShortDescription(SmallVectorImpl<char> &result) override {
+    llvm::raw_svector_ostream(result) << (description.empty() ? "Stale file removal" : description);
+  }
+
+  virtual void getVerboseDescription(SmallVectorImpl<char> &result) override {
+    computeFilesToDelete();
+
+    getShortDescription(result);
+    llvm::raw_svector_ostream(result) << ", stale files: [";
+    for (auto fileToDelete : filesToDelete) {
+      llvm::raw_svector_ostream(result) << fileToDelete;
+      if (fileToDelete != *(--filesToDelete.end())) {
+        llvm::raw_svector_ostream(result) << ", ";
+      }
+    }
+    llvm::raw_svector_ostream(result) << "], roots: [";
+    for (auto root : roots) {
+      llvm::raw_svector_ostream(result) << root;
+      if (root != *(--roots.end())) {
+        llvm::raw_svector_ostream(result) << ", ";
+      }
+    }
+    llvm::raw_svector_ostream(result) << "]";
+  }
+
+  virtual void configureInputs(const ConfigureContext& ctx,
+                               const std::vector<Node*>& value) override {}
+
+  virtual void configureOutputs(const ConfigureContext& ctx,
+                                const std::vector<Node*>& value) override {}
+
+  virtual bool configureAttribute(const ConfigureContext& ctx, StringRef name,
+                                  StringRef value) override {
+    // No supported attributes.
+    ctx.error("unexpected attribute: '" + name + "'");
+    return false;
+  }
+  virtual bool configureAttribute(const ConfigureContext& ctx, StringRef name,
+                                  ArrayRef<StringRef> values) override {
+    if (name == "expectedOutputs") {
+      expectedOutputs.reserve(values.size());
+      for (auto value : values) {
+        expectedOutputs.emplace_back(value.str());
+      }
+      return true;
+    } else if (name == "roots") {
+      roots.reserve(values.size());
+      for (auto value : values) {
+        roots.emplace_back(value.str());
+      }
+      return true;
+    }
+
+    ctx.error("unexpected attribute: '" + name + "'");
+    return false;
+  }
+  virtual bool configureAttribute(const ConfigureContext& ctx, StringRef name,
+                                  ArrayRef<std::pair<StringRef, StringRef>> values) override {
+    // No supported attributes.
+    ctx.error("unexpected attribute: '" + name + "'");
+    return false;
+  }
+
+  virtual BuildValue getResultForOutput(Node* node,
+                                        const BuildValue& value) override {
+    // If the value was a failed command, propagate the failure.
+    if (value.isFailedCommand() || value.isPropagatedFailureCommand() ||
+        value.isCancelledCommand())
+      return BuildValue::makeFailedInput();
+    if (value.isSkippedCommand())
+      return BuildValue::makeSkippedCommand();
+
+    // Otherwise, this was successful, return the value as-is.
+    return BuildValue::fromData(value.toData());;
+  }
+
+  virtual bool isResultValid(BuildSystem& system,
+                             const BuildValue& value) override {
+    // Always re-run stale file removal.
+    return false;
+  }
+
+  virtual void start(BuildSystemCommandInterface& bsci,
+                     core::Task* task) override {}
+
+  virtual void providePriorValue(BuildSystemCommandInterface&, core::Task*,
+                                 const BuildValue& value) override {
+    hasPriorResult = true;
+    priorValue = BuildValue::fromData(value.toData());
+  }
+
+  virtual void provideValue(BuildSystemCommandInterface&, core::Task*,
+                            uintptr_t inputID,
+                            const BuildValue& value) override {
+    assert(0 && "unexpected API call");
+  }
+
+  void computeFilesToDelete() {
+    if (computedFilesToDelete) {
+      return;
+    }
+
+    std::vector<StringRef> priorValueList = priorValue.getStaleFileList();
+    std::set<std::string> priorNodes(priorValueList.begin(), priorValueList.end());
+    std::set<std::string> expectedNodes(expectedOutputs.begin(), expectedOutputs.end());
+
+    std::set_difference(priorNodes.begin(), priorNodes.end(),
+                        expectedNodes.begin(), expectedNodes.end(),
+                        std::back_inserter(filesToDelete));
+
+    computedFilesToDelete = true;
+  }
+
+  virtual BuildValue execute(BuildSystemCommandInterface& bsci,
+                             core::Task* task,
+                             QueueJobContext* context) override {
+    // Nothing to do if we do not have a prior result.
+    if (!hasPriorResult || !priorValue.isStaleFileRemoval()) {
+      bsci.getDelegate().commandStarted(this);
+      bsci.getDelegate().commandFinished(this, CommandResult::Succeeded);
+      return BuildValue::makeStaleFileRemoval(expectedOutputs);
+    }
+
+    computeFilesToDelete();
+
+    bsci.getDelegate().commandStarted(this);
+
+    for (auto fileToDelete : filesToDelete) {
+      // If no root paths are specified, any path is valid.
+      bool isLocatedUnderRootPath = roots.size() == 0 ? true : false;
+
+      // If root paths are defined, stale file paths should be absolute.
+      if (roots.size() > 0 && fileToDelete[0] != path_separator) {
+        bsci.getDelegate().commandHadWarning(this, "Stale file '" + fileToDelete + "' has a relative path. This is invalid in combination with the root path attribute.\n");
+        continue;
+      }
+
+      // Check if the file is located under one of the allowed root paths.
+      for (auto root : roots) {
+        if (pathIsPrefixedByPath(fileToDelete, root)) {
+          isLocatedUnderRootPath = true;
+        }
+      }
+
+      if (!isLocatedUnderRootPath) {
+        bsci.getDelegate().commandHadWarning(this, "Stale file '" + fileToDelete + "' is located outside of the allowed root paths.\n");
+        continue;
+      }
+
+      if (getBuildSystem(bsci.getBuildEngine()).getDelegate().getFileSystem().remove(fileToDelete)) {
+        bsci.getDelegate().commandHadNote(this, "Removed stale file '" + fileToDelete + "'\n");
+      } else {
+        bsci.getDelegate().commandHadWarning(this, "cannot remove stale file '" + fileToDelete + "': " + strerror(errno) + "\n");
+      }
+    }
+
+    bsci.getDelegate().commandFinished(this, CommandResult::Succeeded);
+
+    // Complete with a successful result.
+    return BuildValue::makeStaleFileRemoval(expectedOutputs);
+  }
+
+public:
+  StaleFileRemovalCommand(const StringRef name)
+  : Command(name), priorValue(BuildValue::makeInvalid()) {}
+};
+
+class StaleFileRemovalTool : public Tool {
+public:
+  using Tool::Tool;
+
+  virtual bool configureAttribute(const ConfigureContext& ctx, StringRef name,
+                                  StringRef value) override {
+    // No supported attributes.
+    ctx.error("unexpected attribute: '" + name + "'");
+    return false;
+  }
+  virtual bool configureAttribute(const ConfigureContext& ctx, StringRef name,
+                                  ArrayRef<StringRef> values) override {
+    // No supported attributes.
+    ctx.error("unexpected attribute: '" + name + "'");
+    return false;
+  }
+  virtual bool configureAttribute(
+                                  const ConfigureContext& ctx, StringRef name,
+                                  ArrayRef<std::pair<StringRef, StringRef>> values) override {
+    // No supported attributes.
+    ctx.error("unexpected attribute: '" + name + "'");
+    return false;
+  }
+
+  virtual std::unique_ptr<Command> createCommand(StringRef name) override {
+    return llvm::make_unique<StaleFileRemovalCommand>(name);
+  }
+};
+
 #pragma mark - BuildSystemFileDelegate
 
 BuildSystemDelegate& BuildSystemFileDelegate::getSystemDelegate() {
@@ -1977,6 +2585,8 @@ BuildSystemFileDelegate::lookupTool(StringRef name) {
     return llvm::make_unique<SymlinkTool>(name);
   } else if (name == "archive") {
     return llvm::make_unique<ArchiveTool>(name);
+  } else if (name == "stale-file-removal") {
+    return llvm::make_unique<StaleFileRemovalTool>(name);
   }
 
   return nullptr;
@@ -2003,9 +2613,8 @@ BuildSystemFileDelegate::lookupNode(StringRef name,
 
 #pragma mark - BuildSystem
 
-BuildSystem::BuildSystem(BuildSystemDelegate& delegate,
-                         StringRef mainFilename)
-    : impl(new BuildSystemImpl(*this, delegate, mainFilename))
+BuildSystem::BuildSystem(BuildSystemDelegate& delegate)
+    : impl(new BuildSystemImpl(*this, delegate))
 {
 }
 
@@ -2015,6 +2624,16 @@ BuildSystem::~BuildSystem() {
 
 BuildSystemDelegate& BuildSystem::getDelegate() {
   return static_cast<BuildSystemImpl*>(impl)->getDelegate();
+}
+
+bool BuildSystem::loadDescription(StringRef mainFilename) {
+  return static_cast<BuildSystemImpl*>(impl)->loadDescription(mainFilename);
+}
+
+void BuildSystem::loadDescription(
+    std::unique_ptr<BuildDescription> description) {
+  return static_cast<BuildSystemImpl*>(impl)->loadDescription(
+      std::move(description));
 }
 
 bool BuildSystem::attachDB(StringRef path,
@@ -2027,6 +2646,30 @@ bool BuildSystem::enableTracing(StringRef path,
   return static_cast<BuildSystemImpl*>(impl)->enableTracing(path, error_out);
 }
 
+llvm::Optional<BuildValue> BuildSystem::build(BuildKey key) {
+  return static_cast<BuildSystemImpl*>(impl)->build(key);
+}
+
 bool BuildSystem::build(StringRef name) {
   return static_cast<BuildSystemImpl*>(impl)->build(name);
+}
+
+void BuildSystem::cancel() {
+  if (impl) {
+    static_cast<BuildSystemImpl*>(impl)->cancel();
+  }
+}
+
+void BuildSystem::resetForBuild() {
+  static_cast<BuildSystemImpl*>(impl)->resetForBuild();
+}
+
+// This function checks if the given path is prefixed by another path.
+bool llbuild::buildsystem::pathIsPrefixedByPath(std::string path, std::string prefixPath) {
+  static char path_separator = llvm::sys::path::get_separator()[0];
+  auto res = std::mismatch(prefixPath.begin(), prefixPath.end(), path.begin());
+  // Check if `prefixPath` has been exhausted or just a separator remains.
+  bool isPrefix = res.first == prefixPath.end() || (*(res.first++) == path_separator);
+  // Check if `path` has been exhausted or just a separator remains.
+  return isPrefix && (res.second == path.end() || (*(res.second++) == path_separator));
 }

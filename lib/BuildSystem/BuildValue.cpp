@@ -26,12 +26,17 @@ StringRef BuildValue::stringForKind(BuildValue::Kind kind) {
     CASE(VirtualInput);
     CASE(ExistingInput);
     CASE(MissingInput);
+    CASE(DirectoryContents);
+    CASE(DirectoryTreeSignature);
     CASE(MissingOutput);
     CASE(FailedInput);
     CASE(SuccessfulCommand);
     CASE(FailedCommand);
+    CASE(PropagatedFailureCommand);
+    CASE(CancelledCommand);
     CASE(SkippedCommand);
     CASE(Target);
+    CASE(StaleFileRemoval);
 #undef CASE
   }
   return "<unknown>";
@@ -39,7 +44,10 @@ StringRef BuildValue::stringForKind(BuildValue::Kind kind) {
   
 void BuildValue::dump(raw_ostream& os) const {
   os << "BuildValue(" << stringForKind(kind);
-  if (isExistingInput() || isSuccessfulCommand()) {
+  if (kindHasCommandSignature()) {
+    os << ", signature=" << commandSignature;
+  }
+  if (kindHasOutputInfo()) {
     os << ", outputInfos=[";
     for (unsigned i = 0; i != getNumOutputs(); ++i) {
       auto& info = getNthOutputInfo(i);
@@ -55,6 +63,17 @@ void BuildValue::dump(raw_ostream& os) const {
            << ", modTime=(" << info.modTime.seconds
            << ":" << info.modTime.nanoseconds << "}";
       }
+    }
+    os << "]";
+  }
+  if (kindHasStringList()) {
+    std::vector<StringRef> values = getStringListValues();
+    os << ", values=[";
+    for (unsigned i = 0; i != values.size(); ++i) {
+      if (i != 0) os << ", ";
+      os << '"';
+      os.write_escaped(values[i]);
+      os << '"';
     }
     os << "]";
   }

@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2015 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -14,9 +14,13 @@
 
 #include "llbuild/Basic/FileSystem.h"
 #include "llbuild/Basic/LLVM.h"
+#include "llbuild/Basic/PlatformUtility.h"
+#include "llbuild/BuildSystem/BuildDescription.h"
 #include "llbuild/BuildSystem/BuildExecutionQueue.h"
 #include "llbuild/BuildSystem/BuildFile.h"
+#include "llbuild/BuildSystem/BuildKey.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Path.h"
@@ -25,10 +29,11 @@
 
 #include <atomic>
 #include <memory>
-
-#include <unistd.h>
+#include <mutex>
+#include <thread>
 
 using namespace llbuild;
+using namespace llbuild::basic;
 using namespace llbuild::buildsystem;
 
 #pragma mark - BuildSystemInvocation implementation
@@ -124,6 +129,48 @@ void BuildSystemInvocation::parse(llvm::ArrayRef<std::string> args,
   }
 }
 
+std::string BuildSystemInvocation::formatDetectedCycle(const std::vector<core::Rule*>& cycle) {
+  // Compute a description of the cycle path.
+  SmallString<256> message;
+  llvm::raw_svector_ostream os(message);
+  os << "cycle detected while building: ";
+  bool first = true;
+  for (const auto* rule: cycle) {
+    if (!first)
+      os << " -> ";
+
+    // Convert to a build key.
+    auto key = BuildKey::fromData(rule->key);
+    switch (key.getKind()) {
+      case BuildKey::Kind::Unknown:
+        os << "((unknown))";
+        break;
+      case BuildKey::Kind::Command:
+        os << "command '" << key.getCommandName() << "'";
+        break;
+      case BuildKey::Kind::CustomTask:
+        os << "custom task '" << key.getCustomTaskName() << "'";
+        break;
+      case BuildKey::Kind::DirectoryContents:
+        os << "directory-contents '" << key.getDirectoryContentsPath() << "'";
+        break;
+      case BuildKey::Kind::DirectoryTreeSignature:
+        os << "directory-tree-signature '"
+        << key.getDirectoryTreeSignaturePath() << "'";
+        break;
+      case BuildKey::Kind::Node:
+        os << "node '" << key.getNodeName() << "'";
+        break;
+      case BuildKey::Kind::Target:
+        os << "target '" << key.getTargetName() << "'";
+        break;
+    }
+    first = false;
+  }
+
+  return os.str().str();
+}
+
 #pragma mark - BuildSystemFrontendDelegate implementation
 
 namespace {
@@ -177,15 +224,25 @@ public:
   }
 
   virtual void commandProcessFinished(Command* command, ProcessHandle handle,
+                                      CommandResult result,
                                       int exitStatus) override {
     static_cast<BuildSystemFrontendDelegate*>(&getSystem().getDelegate())->
       commandProcessFinished(
           command, BuildSystemFrontendDelegate::ProcessHandle { handle.id },
-          exitStatus);
+          result, exitStatus);
   }
 };
 
 struct BuildSystemFrontendDelegateImpl {
+
+  /// The status of delegate.
+  enum class Status {
+    Uninitialized = 0,
+    Initialized,
+    InitializationFailure,
+    Cancelled,
+  };
+
   llvm::SourceMgr& sourceMgr;
   const BuildSystemInvocation& invocation;
   
@@ -197,11 +254,39 @@ struct BuildSystemFrontendDelegateImpl {
 
   BuildSystemFrontend* frontend = nullptr;
   BuildSystem* system = nullptr;
+
+  /// The set of active command output buffers, by process handle.
+  llvm::DenseMap<uintptr_t, std::vector<uint8_t>> processOutputBuffers;
+
+  /// The lock protecting `processOutputBuffers`.
+  std::mutex processOutputBuffersMutex;
   
   BuildSystemFrontendDelegateImpl(llvm::SourceMgr& sourceMgr,
                                   const BuildSystemInvocation& invocation)
       : sourceMgr(sourceMgr), invocation(invocation),
         executionQueueDelegate(*this) {}
+
+private:
+  /// The status of the delegate.
+  std::atomic<Status> status{Status::Uninitialized};
+
+public:
+
+  /// Set the status of delegate to the given value.
+  ///
+  /// It is not possible to update the status once status is set to initialization failure.
+  void setStatus(Status newStatus) {
+    // Disallow changing status if there was an initialization failure.
+    if (status == Status::InitializationFailure) {
+      return;
+    }
+    status = newStatus;
+  }
+
+  /// Returns the current status.
+  Status getStatus() {
+    return status;
+  }
 };
 
 bool BuildSystemFrontendExecutionQueueDelegate::showVerboseOutput() const {
@@ -311,26 +396,54 @@ BuildSystemFrontendDelegate::createExecutionQueue() {
   
   if (impl->invocation.useSerialBuild) {
     return std::unique_ptr<BuildExecutionQueue>(
-        createLaneBasedExecutionQueue(impl->executionQueueDelegate, 1));
+        createLaneBasedExecutionQueue(impl->executionQueueDelegate, 1,
+                                      impl->invocation.environment));
   }
     
   // Get the number of CPUs to use.
-  long numCPUs = sysconf(_SC_NPROCESSORS_ONLN);
+  unsigned numCPUs = std::thread::hardware_concurrency();
   unsigned numLanes;
-  if (numCPUs < 0) {
+  if (numCPUs == 0) {
     error("<unknown>", {}, "unable to detect number of CPUs");
     numLanes = 1;
   } else {
-    numLanes = numCPUs + 2;
+    numLanes = numCPUs;
   }
     
   return std::unique_ptr<BuildExecutionQueue>(
-      createLaneBasedExecutionQueue(impl->executionQueueDelegate, numLanes));
+      createLaneBasedExecutionQueue(impl->executionQueueDelegate, numLanes,
+                                    impl->invocation.environment));
 }
 
-bool BuildSystemFrontendDelegate::isCancelled() {
-  // Stop the build after any command failures.
-  return getNumFailedCommands() > 0;
+void BuildSystemFrontendDelegate::cancel() {
+  auto delegateImpl = static_cast<BuildSystemFrontendDelegateImpl*>(impl);
+  assert(delegateImpl->getStatus() != BuildSystemFrontendDelegateImpl::Status::Uninitialized);
+
+  // Update the status to cancelled.
+  delegateImpl->setStatus(BuildSystemFrontendDelegateImpl::Status::Cancelled);
+
+  auto system = delegateImpl->system;
+  if (system) {
+    system->cancel();
+  }
+}
+
+void BuildSystemFrontendDelegate::resetForBuild() {
+  auto impl = static_cast<BuildSystemFrontendDelegateImpl*>(this->impl);
+
+  impl->numFailedCommands = 0;
+  impl->numErrors = 0;
+
+  // Update status back to initialized on reset.
+  if (impl->getStatus() == BuildSystemFrontendDelegateImpl::Status::Cancelled) {
+      impl->setStatus(BuildSystemFrontendDelegateImpl::Status::Initialized);
+  }
+
+  // Reset the build system.
+  auto system = impl->system;
+  if (system) {
+    system->resetForBuild();
+  }
 }
 
 void BuildSystemFrontendDelegate::hadCommandFailure() {
@@ -345,6 +458,10 @@ void BuildSystemFrontendDelegate::commandStatusChanged(Command*,
 }
 
 void BuildSystemFrontendDelegate::commandPreparing(Command*) {
+}
+
+bool BuildSystemFrontendDelegate::shouldCommandStart(Command*) {
+  return true;
 }
 
 void BuildSystemFrontendDelegate::commandStarted(Command* command) {
@@ -371,7 +488,22 @@ void BuildSystemFrontendDelegate::commandStarted(Command* command) {
   fflush(stdout);
 }
 
-void BuildSystemFrontendDelegate::commandFinished(Command*) {
+void BuildSystemFrontendDelegate::commandHadError(Command* command, StringRef data) {
+  fwrite(data.data(), data.size(), 1, stderr);
+  fflush(stderr);
+}
+
+void BuildSystemFrontendDelegate::commandHadNote(Command* command, StringRef data) {
+  fwrite(data.data(), data.size(), 1, stdout);
+  fflush(stdout);
+}
+
+void BuildSystemFrontendDelegate::commandHadWarning(Command* command, StringRef data) {
+  fwrite(data.data(), data.size(), 1, stdout);
+  fflush(stdout);
+}
+
+void BuildSystemFrontendDelegate::commandFinished(Command*, CommandResult) {
 }
 
 void BuildSystemFrontendDelegate::commandJobStarted(Command*) {
@@ -399,14 +531,30 @@ commandProcessHadError(Command* command, ProcessHandle handle,
 void BuildSystemFrontendDelegate::
 commandProcessHadOutput(Command* command, ProcessHandle handle,
                         StringRef data) {
-  // FIXME: Design the logging and status output APIs.
-  fwrite(data.data(), data.size(), 1, stdout);
-  fflush(stdout);
+  auto impl = static_cast<BuildSystemFrontendDelegateImpl*>(this->impl);
+  std::unique_lock<std::mutex> lock(impl->processOutputBuffersMutex);
+
+  // Append to the output buffer.
+  auto& buffer = impl->processOutputBuffers[handle.id];
+  buffer.insert(buffer.end(), data.begin(), data.end());
 }
 
 void BuildSystemFrontendDelegate::
 commandProcessFinished(Command*, ProcessHandle handle,
+                       CommandResult result,
                        int exitStatus) {
+  auto impl = static_cast<BuildSystemFrontendDelegateImpl*>(this->impl);
+  std::unique_lock<std::mutex> lock(impl->processOutputBuffersMutex);
+
+  // If there was an output buffer, flush it.
+  auto it = impl->processOutputBuffers.find(handle.id);
+  if (it == impl->processOutputBuffers.end())
+    return;
+
+  fwrite(it->second.data(), it->second.size(), 1, stdout);
+  fflush(stdout);
+
+  impl->processOutputBuffers.erase(it);  
 }
 
 #pragma mark - BuildSystemFrontend implementation
@@ -422,29 +570,32 @@ BuildSystemFrontend(BuildSystemFrontendDelegate& delegate,
   delegateImpl->frontend = this;
 }
 
-bool BuildSystemFrontend::build(StringRef targetToBuild) {
-  // Honor the --chdir option, if used.
+bool BuildSystemFrontend::initialize() {
   if (!invocation.chdirPath.empty()) {
-    if (::chdir(invocation.chdirPath.c_str()) < 0) {
+    if (!sys::chdir(invocation.chdirPath.c_str())) {
       getDelegate().error(Twine("unable to honor --chdir: ") + strerror(errno));
       return false;
     }
   }
 
   // Create the build system.
-  BuildSystem system(delegate, invocation.buildFilePath);
+  buildSystem.emplace(delegate);
+
+  // Load the build file.
+  if (!buildSystem->loadDescription(invocation.buildFilePath))
+    return false;
 
   // Register the system back pointer.
   //
   // FIXME: Eliminate this.
   auto delegateImpl =
     static_cast<BuildSystemFrontendDelegateImpl*>(delegate.impl);
-  delegateImpl->system = &system;
+  delegateImpl->system = buildSystem.getPointer();
   
   // Enable tracing, if requested.
   if (!invocation.traceFilePath.empty()) {
     std::string error;
-    if (!system.enableTracing(invocation.traceFilePath, &error)) {
+    if (!buildSystem->enableTracing(invocation.traceFilePath, &error)) {
       getDelegate().error(Twine("unable to enable tracing: ") + error);
       return false;
     }
@@ -465,24 +616,49 @@ bool BuildSystemFrontend::build(StringRef targetToBuild) {
     }
     
     std::string error;
-    if (!system.attachDB(dbPath, &error)) {
+    if (!buildSystem->attachDB(dbPath, &error)) {
       getDelegate().error(Twine("unable to attach DB: ") + error);
       return false;
     }
   }
 
-  // If something unspecified failed about the build, return an error.
-  if (!system.build(targetToBuild)) {
-    return false;
+  return true;
+}
+
+bool BuildSystemFrontend::build(StringRef targetToBuild) {
+
+  auto delegateImpl =
+    static_cast<BuildSystemFrontendDelegateImpl*>(delegate.impl);
+
+  // We expect build to be called in these states only.
+  assert(delegateImpl->getStatus() == BuildSystemFrontendDelegateImpl::Status::Uninitialized
+    || delegateImpl->getStatus() == BuildSystemFrontendDelegateImpl::Status::Initialized);
+
+  // Set the delegate status to initialized.
+  delegateImpl->setStatus(BuildSystemFrontendDelegateImpl::Status::Initialized);
+
+  // Initialize the build system, if necessary
+  if (!buildSystem.hasValue()) {
+    if (!initialize()) {
+      // Set status to initialization failure. It is not possible to recover from this state.
+      delegateImpl->setStatus(BuildSystemFrontendDelegateImpl::Status::InitializationFailure);
+      return false;
+    }
   }
 
-  // If there were failed commands, report the count and return an error.
-  if (delegate.getNumFailedCommands()) {
-    getDelegate().error("build had " + Twine(delegate.getNumFailedCommands()) +
-                        " command failures");
-    return false;
+  // If delegate was told to cancel while we were initializing, abort now.
+  if (delegateImpl->getStatus() == BuildSystemFrontendDelegateImpl::Status::Cancelled) {
+      return false;
   }
 
-  // Otherwise, return an error only if there were unspecified errors.
-  return delegate.getNumErrors() == 0;
+  // Build the target; if something unspecified failed about the build, return
+  // an error.
+  if (!buildSystem->build(targetToBuild))
+    return false;
+
+  // The build was successful if there were no failed commands or unspecified
+  // errors.
+  //
+  // It is the job of the client to report a summary, if desired.
+  return delegate.getNumFailedCommands() == 0 && delegate.getNumErrors() == 0;
 }

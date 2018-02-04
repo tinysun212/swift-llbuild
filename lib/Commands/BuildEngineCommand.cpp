@@ -12,7 +12,10 @@
 
 #include "llbuild/Commands/Commands.h"
 
+#include "llbuild/Basic/LLVM.h"
 #include "llbuild/Core/BuildEngine.h"
+
+#include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
 #include <cmath>
@@ -77,66 +80,113 @@ static core::ValueType intToValue(int32_t value) {
   return result;
 }
 
-static core::Task* buildAck(core::BuildEngine& engine, int m, int n) {
-  struct AckermannTask : core::Task {
-    int m, n;
-    int recursiveResultA = 0;
-    int recursiveResultB = 0;
+/// Key representation used in Ackermann build.
+struct AckermannKey {
+  /// The Ackermann number this key represents.
+  int m, n;
 
-    AckermannTask(int m, int n) : m(m), n(n) { }
+  /// Create a key representing the given Ackermann number.
+  AckermannKey(int m, int n) : m(m), n(n) {}
 
-    virtual void provideValue(core::BuildEngine& engine, uintptr_t inputID,
-                              const core::ValueType& value) override {
-      if (inputID == 0) {
-        recursiveResultA = intFromValue(value);
+  /// Create an Ackermann key from the encoded representation.
+  AckermannKey(const core::KeyType& key) {
+      auto keyString = StringRef(key);
+      assert(keyString.startswith("ack(") && keyString.endswith(")"));
+      auto arguments = keyString.split("(").second.split(")").first.split(",");
+      m = 0;
+      n = 0;
+      (void)arguments.first.getAsInteger(10, m);
+      (void)arguments.second.getAsInteger(10, n);
+      assert(m >= 0 && m < 4);
+      assert(n >= 0);
+  }
 
-        // Request the second recursive result, if needed.
-        if (m != 0 && n != 0) {
-          char inputKey[32];
-          sprintf(inputKey, "ack(%d,%d)", m - 1, recursiveResultA);
-          engine.taskNeedsInput(this, inputKey, 1);
-        }
-      } else {
-        assert(inputID == 1 && "invalid input ID");
-        recursiveResultB = intFromValue(value);
+  /// Convert an Ackermann key to its encoded representation.
+  operator core::KeyType() const {
+    char inputKey[32];
+    sprintf(inputKey, "ack(%d,%d)", m, n);
+    return inputKey;
+  }
+};
+
+/// Value representation used in Ackermann build.
+struct AckermannValue {
+  int value;
+
+  /// Create a value for 0.
+  AckermannValue() : value(0) { }
+
+  /// Create a value from an integer.
+  AckermannValue(int value) : value(value) { }
+
+  /// Create a value from the encoded representation.
+  AckermannValue(const core::ValueType& value) : value(intFromValue(value)) { }
+
+  /// Convert a value to its encoded representation.
+  operator core::ValueType() const {
+    return intToValue(value);
+  }
+
+  /// Convert a wrapped value to its actual value.
+  operator int() const {
+    return value;
+  }
+};
+    
+struct AckermannTask : core::Task {
+  int m, n;
+  AckermannValue recursiveResultA = {};
+  AckermannValue recursiveResultB = {};
+
+  AckermannTask(core::BuildEngine& engine, int m, int n) : m(m), n(n) {
+    engine.registerTask(this);
+  }
+
+  /// Called when the task is started.
+  virtual void start(core::BuildEngine& engine) override {
+    // Request the first recursive result, if necessary.
+    if (m == 0) {
+      ;
+    } else if (n == 0) {
+      engine.taskNeedsInput(this, AckermannKey(m-1, 1), 0);
+    } else {
+      engine.taskNeedsInput(this, AckermannKey(m, n-1), 0);
+    }
+  }
+
+  /// Called when a task’s requested input is available.
+  virtual void provideValue(core::BuildEngine& engine, uintptr_t inputID,
+                            const core::ValueType& value) override {
+    if (inputID == 0) {
+      recursiveResultA = value;
+
+      // Request the second recursive result, if needed.
+      if (m != 0 && n != 0) {
+        engine.taskNeedsInput(this, AckermannKey(m-1, recursiveResultA), 1);
       }
+    } else {
+      assert(inputID == 1 && "invalid input ID");
+      recursiveResultB = value;
+    }
+  }
+
+  /// Called when all inputs are available.
+  virtual void inputsAvailable(core::BuildEngine& engine) override {
+    if (m == 0) {
+      engine.taskIsComplete(this, AckermannValue(n + 1));
+      return;
     }
 
-    virtual void start(core::BuildEngine& engine) override {
-      // Request the first recursive result, if necessary.
-      if (m == 0) {
-        ;
-      } else if (n == 0) {
-        char inputKey[32];
-        sprintf(inputKey, "ack(%d,%d)", m-1, 1);
-        engine.taskNeedsInput(this, inputKey, 0);
-      } else {
-        char inputKey[32];
-        sprintf(inputKey, "ack(%d,%d)", m, n-1);
-        engine.taskNeedsInput(this, inputKey, 0);
-      }
+    assert(recursiveResultA != 0);
+    if (n == 0) {
+      engine.taskIsComplete(this, recursiveResultA);
+      return;
     }
 
-    virtual void inputsAvailable(core::BuildEngine& engine) override {
-      if (m == 0) {
-        engine.taskIsComplete(this, intToValue(n + 1));
-        return;
-      }
-
-      assert(recursiveResultA != 0);
-      if (n == 0) {
-        engine.taskIsComplete(this, intToValue(recursiveResultA));
-        return;
-      }
-
-      assert(recursiveResultB != 0);
-      engine.taskIsComplete(this, intToValue(recursiveResultB));
-    }
-  };
-
-  // Create the task.
-  return engine.registerTask(new AckermannTask(m, n));
-}
+    assert(recursiveResultB != 0);
+    engine.taskIsComplete(this, recursiveResultB);
+  }
+};
 
 static int runAckermannBuild(int m, int n, int recomputeCount,
                              const std::string& traceFilename,
@@ -151,28 +201,23 @@ static int runAckermannBuild(int m, int n, int recomputeCount,
   public:
     int numRules = 0;
 
-    virtual core::Rule lookupRule(const core::KeyType& key) override {
-      // Extract the Ackermann parameters.
-      //
-      // FIXME: Need generalized key type.
-      assert(key[0] == 'a' && key[1] == 'c' && key[2] == 'k' &&
-             key[3] == '(');
-      const char* mStart = &key[4];
-      const char* mEnd = strchr(mStart, ',');
-      assert(mEnd != nullptr && mEnd[0] == ',');
-      const char* nStart = &mEnd[1];
-      int m = strtol(mStart, nullptr, 10);
-      int n = strtol(nStart, nullptr, 10);
-      assert(m >= 0 && m < 4);
-      assert(n >= 0);
-
+    /// Get the rule to use for the given Key.
+    virtual core::Rule lookupRule(const core::KeyType& keyData) override {
       ++numRules;
-      return core::Rule{key, [m, n] (core::BuildEngine& engine) {
-          return buildAck(engine, m, n); } };
+      auto key = AckermannKey(keyData);
+      return core::Rule{key, [key] (core::BuildEngine& engine) {
+          return new AckermannTask(engine, key.m, key.n); } };
     }
 
+    /// Called when a cycle is detected by the build engine and it cannot make
+    /// forward progress.
     virtual void cycleDetected(const std::vector<core::Rule*>& items) override {
       assert(0 && "unexpected cycle!");
+    }
+
+    /// Called when a fatal error is encountered by the build engine.
+    virtual void error(const Twine &message) override {
+      assert(0 && ("error:" + message.str()).c_str());
     }
   };
   AckermannDelegate delegate;
@@ -188,17 +233,16 @@ static int runAckermannBuild(int m, int n, int recomputeCount,
     }
   }
 
-  char key[32];
-  sprintf(key, "ack(%d,%d)", m, n);
-  int result = intFromValue(engine.build(key));
-  std::cout << "ack(" << m << ", " << n << ") = " << result << "\n";
+  auto key = AckermannKey(m, n);
+  auto result = AckermannValue(engine.build(key));
+  llvm::outs() << "ack(" << m << ", " << n << ") = " << result << "\n";
   if (n < 10) {
 #ifndef NDEBUG
     int expected = ack(m, n);
     assert(result == expected);
 #endif
   }
-  std::cout << "... computed using " << delegate.numRules << " rules\n";
+  llvm::outs() << "... computed using " << delegate.numRules << " rules\n";
 
   if (!dumpGraphPath.empty()) {
     engine.dumpGraphToFile(dumpGraphPath);
@@ -206,7 +250,7 @@ static int runAckermannBuild(int m, int n, int recomputeCount,
 
   // Recompute the result as many times as requested.
   for (int i = 0; i != recomputeCount; ++i) {
-    int recomputedResult = intFromValue(engine.build(key));
+    auto recomputedResult = AckermannValue(engine.build(key));
     if (recomputedResult != result)
       abort();
   }
@@ -244,21 +288,21 @@ static int executeAckermannCommand(std::vector<std::string> args) {
       ackermannUsage();
     } else if (option == "--recompute") {
       if (args.empty()) {
-        fprintf(stderr, "\error: %s: missing argument to '%s'\n\n",
+        fprintf(stderr, "error: %s: missing argument to '%s'\n\n",
                 getProgramName(), option.c_str());
         ackermannUsage();
       }
       char *end;
       recomputeCount = ::strtol(args[0].c_str(), &end, 10);
       if (*end != '\0') {
-        fprintf(stderr, "\error: %s: invalid argument to '%s'\n\n",
+        fprintf(stderr, "error: %s: invalid argument to '%s'\n\n",
                 getProgramName(), option.c_str());
         ackermannUsage();
       }
       args.erase(args.begin());
     } else if (option == "--dump-graph") {
       if (args.empty()) {
-        fprintf(stderr, "\error: %s: missing argument to '%s'\n\n",
+        fprintf(stderr, "error: %s: missing argument to '%s'\n\n",
                 getProgramName(), option.c_str());
         ackermannUsage();
       }
@@ -266,14 +310,14 @@ static int executeAckermannCommand(std::vector<std::string> args) {
       args.erase(args.begin());
     } else if (option == "--trace") {
       if (args.empty()) {
-        fprintf(stderr, "\error: %s: missing argument to '%s'\n\n",
+        fprintf(stderr, "error: %s: missing argument to '%s'\n\n",
                 getProgramName(), option.c_str());
         ackermannUsage();
       }
       traceFilename = args[0];
       args.erase(args.begin());
     } else {
-      fprintf(stderr, "\error: %s: invalid option: '%s'\n\n",
+      fprintf(stderr, "error: %s: invalid option: '%s'\n\n",
               getProgramName(), option.c_str());
       ackermannUsage();
     }

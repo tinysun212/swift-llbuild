@@ -20,15 +20,23 @@
 #include <utility>
 #include <vector>
 
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
+
 namespace llbuild {
 namespace core {
 
 // FIXME: Need to abstract KeyType;
 typedef std::string KeyType;
+typedef uint64_t KeyID;
 typedef std::vector<uint8_t> ValueType;
 
 class BuildDB;
 class BuildEngine;
+
+/// A monotonically increasing timestamp identifying which iteration of a build
+/// an event occurred during.
+typedef uint64_t Timestamp;
 
 /// This object contains the result of executing a task to produce the value for
 /// a key.
@@ -55,7 +63,7 @@ struct Result {
   //
   // FIXME: At some point, figure out the optimal representation for this field,
   // which is likely to be a lot of the resident memory size.
-  std::vector<KeyType> dependencies;
+  std::vector<KeyID> dependencies;
 };
 
 /// A task object represents an abstract in-progress computation in the build
@@ -81,8 +89,6 @@ struct Result {
 /// complete its computation and provide the output. The Task is responsible for
 /// providing the engine with the computed value when ready using \see
 /// BuildEngine::taskIsComplete().
-//
-// FIXME: Define parallel execution semantics.
 class Task {
 public:
   Task() {}
@@ -195,8 +201,15 @@ public:
   /// Called when a cycle is detected by the build engine and it cannot make
   /// forward progress.
   ///
-  /// \param items The ordered list of items comprising the cycle.
+  /// \param items The ordered list of items comprising the cycle, starting from
+  /// the node which was requested to build and ending with the first node in
+  /// the cycle (i.e., the node participating in the cycle will appear twice).
   virtual void cycleDetected(const std::vector<Rule*>& items) = 0;
+
+  /// Called when a fatal error is encountered by the build engine.
+  ///
+  /// \param message The diagnostic message.
+  virtual void error(const llvm::Twine& message) = 0;
 
 };
 
@@ -232,6 +245,12 @@ public:
   /// Return the delegate the engine was configured with.
   BuildEngineDelegate* getDelegate();
 
+  /// Get the current build timestamp used by the engine.
+  ///
+  /// The timestamp is a monotonically increasing value which is incremented
+  /// with each requested build.
+  Timestamp getCurrentTimestamp();
+
   /// @name Rule Definition
   /// @{
 
@@ -244,6 +263,10 @@ public:
   /// @{
 
   /// Build the result for a particular key.
+  ///
+  /// \returns The result of computing the key, or the empty value if the key
+  /// could not be computed; the latter case only happens if a cycle was
+  /// discovered currently.
   const ValueType& build(const KeyType& key);
 
   /// Attach a database for persisting build state.
@@ -251,7 +274,10 @@ public:
   /// A database should only be attached immediately after creating the engine,
   /// it is an error to attach a database after adding rules or initiating any
   /// builds, or to attempt to attach multiple databases.
-  void attachDB(std::unique_ptr<BuildDB> database);
+  ///
+  /// \param error_out [out] Error string if return value is false.
+  /// \returns false if the build database could not be attached.
+  bool attachDB(std::unique_ptr<BuildDB> database, std::string* error_out);
 
   /// Enable tracing into the given output file.
   ///

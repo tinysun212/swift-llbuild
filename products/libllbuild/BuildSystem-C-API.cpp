@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2015 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2015 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See http://swift.org/LICENSE.txt for license information
@@ -15,11 +15,14 @@
 
 #include "llbuild/Basic/FileSystem.h"
 #include "llbuild/BuildSystem/BuildFile.h"
+#include "llbuild/BuildSystem/BuildKey.h"
 #include "llbuild/BuildSystem/BuildSystemCommandInterface.h"
 #include "llbuild/BuildSystem/BuildSystemFrontend.h"
+#include "llbuild/BuildSystem/CommandResult.h"
 #include "llbuild/BuildSystem/ExternalCommand.h"
 #include "llbuild/Core/BuildEngine.h"
 
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
@@ -44,6 +47,15 @@ public:
       : cAPIDelegate(delegate),
         localFileSystem(basic::createLocalFileSystem()) { }
 
+  virtual bool
+  createDirectory(const std::string& path) override {
+    if (!cAPIDelegate.fs_create_directory) {
+      return localFileSystem->createDirectory(path);
+    }
+
+    return cAPIDelegate.fs_create_directory(cAPIDelegate.context, path.c_str());
+  }
+  
   virtual std::unique_ptr<llvm::MemoryBuffer>
   getFileContents(const std::string& path) override {
     if (!cAPIDelegate.fs_get_file_contents) {
@@ -68,6 +80,14 @@ public:
     free((char*)data.data);
 
     return result;
+  }
+
+  virtual bool remove(const std::string& path) override {
+    if (!cAPIDelegate.fs_remove) {
+      return localFileSystem->remove(path);
+    }
+
+    return cAPIDelegate.fs_remove(cAPIDelegate.context, path.c_str());
   }
 
   virtual basic::FileInfo getFileInfo(const std::string& path) override {
@@ -117,14 +137,30 @@ public:
 class CAPIBuildSystemFrontendDelegate : public BuildSystemFrontendDelegate {
   llb_buildsystem_delegate_t cAPIDelegate;
   CAPIFileSystem fileSystem;
-  std::atomic<bool> isCancelled_;
+
+  llb_buildsystem_command_result_t get_command_result(CommandResult commandResult) {
+    switch (commandResult) {
+      case CommandResult::Succeeded:
+        return llb_buildsystem_command_result_succeeded;
+      case CommandResult::Cancelled:
+        return llb_buildsystem_command_result_cancelled;
+      case CommandResult::Failed:
+        return llb_buildsystem_command_result_failed;
+      case CommandResult::Skipped:
+        return llb_buildsystem_command_result_skipped;
+      default:
+        assert(0 && "unknown command result");
+        break;
+    }
+    return llb_buildsystem_command_result_failed;
+  }
 
 public:
   CAPIBuildSystemFrontendDelegate(llvm::SourceMgr& sourceMgr,
                                   BuildSystemInvocation& invocation,
                                   llb_buildsystem_delegate_t delegate)
       : BuildSystemFrontendDelegate(sourceMgr, invocation, "basic", 0),
-        cAPIDelegate(delegate), fileSystem(delegate), isCancelled_(false) { }
+        cAPIDelegate(delegate), fileSystem(delegate) { }
 
   virtual basic::FileSystem& getFileSystem() override { return fileSystem; }
   
@@ -140,10 +176,6 @@ public:
     }
 
     return std::unique_ptr<Tool>((Tool*)tool);
-  }
-
-  virtual bool isCancelled() override {
-    return isCancelled_;
   }
 
   virtual void hadCommandFailure() override {
@@ -192,6 +224,15 @@ public:
     }
   }
 
+  virtual bool shouldCommandStart(Command * command) override {
+    if (cAPIDelegate.should_command_start) {
+      return cAPIDelegate.should_command_start(
+          cAPIDelegate.context, (llb_buildsystem_command_t*) command);
+    } else {
+      return true;
+    }
+  }
+
   virtual void commandStarted(Command* command) override {
     if (cAPIDelegate.command_started) {
       cAPIDelegate.command_started(
@@ -200,11 +241,42 @@ public:
     }
   }
 
-  virtual void commandFinished(Command* command) override {
+  virtual void commandFinished(Command* command, CommandResult commandResult) override {
     if (cAPIDelegate.command_finished) {
       cAPIDelegate.command_finished(
           cAPIDelegate.context,
-          (llb_buildsystem_command_t*) command);
+          (llb_buildsystem_command_t*) command,
+          get_command_result(commandResult));
+    }
+  }
+
+  virtual void commandHadError(Command* command, StringRef message) override {
+    if (cAPIDelegate.command_had_error) {
+      llb_data_t cMessage { message.size(), (const uint8_t*) message.data() };
+      cAPIDelegate.command_had_error(
+          cAPIDelegate.context,
+          (llb_buildsystem_command_t*) command,
+          &cMessage);
+    }
+  }
+
+  virtual void commandHadNote(Command* command, StringRef message) override {
+    if (cAPIDelegate.command_had_note) {
+      llb_data_t cMessage { message.size(), (const uint8_t*) message.data() };
+      cAPIDelegate.command_had_note(
+          cAPIDelegate.context,
+          (llb_buildsystem_command_t*) command,
+          &cMessage);
+    }
+  }
+
+  virtual void commandHadWarning(Command* command, StringRef message) override {
+    if (cAPIDelegate.command_had_warning) {
+      llb_data_t cMessage { message.size(), (const uint8_t*) message.data() };
+      cAPIDelegate.command_had_warning(
+         cAPIDelegate.context,
+         (llb_buildsystem_command_t*) command,
+         &cMessage);
     }
   }
 
@@ -245,28 +317,69 @@ public:
   }
   
   virtual void commandProcessFinished(Command* command, ProcessHandle handle,
+                                      CommandResult commandResult,
                                       int exitStatus) override {
     if (cAPIDelegate.command_process_finished) {
       cAPIDelegate.command_process_finished(
           cAPIDelegate.context,
           (llb_buildsystem_command_t*) command,
           (llb_buildsystem_process_t*) handle.id,
+          get_command_result(commandResult),
           exitStatus);
     }
   }
 
-  /// Reset mutable build state before a new build operation.
-  void resetForBuild() {
-    isCancelled_ = false;
+  /// Request cancellation of any current build.
+  void cancel() override {
+    BuildSystemFrontendDelegate::cancel();
   }
 
-  /// Request cancellation of any current build.
-  void cancel() {
-    // FIXME: We need to implement BuildSystem layer support for real
-    // cancellation (including task and subprocess termination).
+  virtual void cycleDetected(const std::vector<core::Rule*>& items) override {
+    std::vector<llb_build_key_t> rules(items.size());
+    int idx = 0;
 
-    // FIXME: We should audit that a build is happening.
-    isCancelled_ = true;
+    for (std::vector<core::Rule*>::const_iterator it = items.begin(); it != items.end(); ++it) {
+      core::Rule* rule = *it;
+      auto key = BuildKey::fromData(rule->key);
+      auto& buildKey = rules[idx++];
+
+      switch (key.getKind()) {
+        case BuildKey::Kind::Command:
+          buildKey.kind = llb_build_key_kind_command;
+          buildKey.key = strdup(key.getCommandName().str().c_str());
+          break;
+        case BuildKey::Kind::CustomTask:
+          buildKey.kind = llb_build_key_kind_custom_task;
+          buildKey.key = strdup(key.getCustomTaskName().str().c_str());
+          break;
+        case BuildKey::Kind::DirectoryContents:
+          buildKey.kind = llb_build_key_kind_directory_contents;
+          buildKey.key = strdup(key.getDirectoryContentsPath().str().c_str());
+          break;
+        case BuildKey::Kind::DirectoryTreeSignature:
+          buildKey.kind = llb_build_key_kind_directory_tree_signature;
+          buildKey.key = strdup(key.getDirectoryTreeSignaturePath().str().c_str());
+          break;
+        case BuildKey::Kind::Node:
+          buildKey.kind = llb_build_key_kind_node;
+          buildKey.key = strdup(key.getNodeName().str().c_str());
+          break;
+        case BuildKey::Kind::Target:
+          buildKey.kind = llb_build_key_kind_target;
+          buildKey.key = strdup(key.getTargetName().str().c_str());
+          break;
+        case BuildKey::Kind::Unknown:
+          buildKey.kind = llb_build_key_kind_unknown;
+          buildKey.key = strdup("((unknown))");
+          break;
+      }
+    }
+
+    cAPIDelegate.cycle_detected(cAPIDelegate.context, &rules[0], rules.size());
+
+    for (unsigned long i=0;i<rules.size();i++) {
+      free((char *)rules[i].key);
+    }
   }
 };
 
@@ -313,7 +426,9 @@ public:
     invocation.buildFilePath =
       cAPIInvocation.buildFilePath ? cAPIInvocation.buildFilePath : "";
     invocation.dbPath = cAPIInvocation.dbPath ? cAPIInvocation.dbPath : "";
-    invocation.traceFilePath = cAPIInvocation.traceFilePath ? cAPIInvocation.traceFilePath : "";
+    invocation.traceFilePath = (
+        cAPIInvocation.traceFilePath ? cAPIInvocation.traceFilePath : "");
+    invocation.environment = cAPIInvocation.environment;
     invocation.useSerialBuild = cAPIInvocation.useSerialBuild;
     invocation.showVerboseStatus = cAPIInvocation.showVerboseStatus;
 
@@ -338,12 +453,16 @@ public:
     return *frontend;
   }
 
+  bool initialize() {
+    return getFrontend().initialize();
+  }
+
   bool build(const core::KeyType& key) {
     // Reset mutable build state.
     frontendDelegate->resetForBuild();
 
     // FIXME: We probably should return a context to represent the running
-    // build, instead of keeping state (like cancellation) in the delegate).
+    // build, instead of keeping state (like cancellation) in the delegate.
     return getFrontend().build(key);
   }
 
@@ -399,13 +518,13 @@ class CAPIExternalCommand : public ExternalCommand {
   // that the delegates are const and we just carry the context pointer around.
   llb_buildsystem_external_command_delegate_t cAPIDelegate;
 
-  virtual bool executeExternalCommand(BuildSystemCommandInterface& bsci,
-                                      core::Task* task,
-                                      QueueJobContext* job_context) override {
+  virtual CommandResult executeExternalCommand(BuildSystemCommandInterface& bsci,
+                                               core::Task* task,
+                                               QueueJobContext* job_context) override {
     return cAPIDelegate.execute_command(
         cAPIDelegate.context, (llb_buildsystem_command_t*)this,
         (llb_buildsystem_command_interface_t*)&bsci,
-        (llb_task_t*)task, (llb_buildsystem_queue_job_context_t*)job_context);
+        (llb_task_t*)task, (llb_buildsystem_queue_job_context_t*)job_context) ? CommandResult::Succeeded : CommandResult::Failed;
   }
 
 public:
@@ -422,6 +541,24 @@ public:
   virtual void getVerboseDescription(SmallVectorImpl<char> &result) override {
     // FIXME: Provide client control.
     llvm::raw_svector_ostream(result) << getName();
+  }
+
+  virtual uint64_t getSignature() override {
+    // FIXME: Use a more appropriate hashing infrastructure.
+    using llvm::hash_combine;
+    llvm::hash_code code = ExternalCommand::getSignature();
+    if (cAPIDelegate.get_signature) {
+      llb_data_t data;
+      cAPIDelegate.get_signature(cAPIDelegate.context, (llb_buildsystem_command_t*)this,
+                                 &data);
+      code = hash_combine(code, StringRef((const char*)data.data, data.length));
+
+      // Release the client memory.
+      //
+      // FIXME: This is gross, come up with a general purpose solution.
+      free((char*)data.data);
+    }
+    return size_t(code);
   }
 };
 
@@ -467,6 +604,11 @@ llb_buildsystem_tool_create(const llb_data_t* name,
   assert(delegate.create_command);
   return (llb_buildsystem_tool_t*) new CAPITool(
       StringRef((const char*)name->data, name->length), delegate);
+}
+
+bool llb_buildsystem_initialize(llb_buildsystem_t* system_p) {
+  CAPIBuildSystem* system = (CAPIBuildSystem*) system_p;
+  return system->initialize();
 }
 
 bool llb_buildsystem_build(llb_buildsystem_t* system_p, const llb_data_t* key) {
