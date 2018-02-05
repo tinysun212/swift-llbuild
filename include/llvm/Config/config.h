@@ -244,4 +244,9 @@
 /* Define as the return type of signal handlers (`int' or `void'). */
 #define RETSIGTYPE void
 
+#if defined(__CYGWIN__)
+#undef HAVE_BACKTRACE
+#undef HAVE_EXECINFO_H
+#endif
+
 #endif
